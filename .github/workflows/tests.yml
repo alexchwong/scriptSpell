@@ -1,0 +1,35 @@
+name: tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+        python: ['3.10', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install '.[dev]'
+      - run: python -m pytest -q --strict-feasibility
+      - name: Keep feasibility reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: feasibility-${{ matrix.os }}-py${{ matrix.python }}
+          path: reports/*.json
+          if-no-files-found: warn
+      - run: python -m build --wheel
+      - run: python -m pip install --force-reinstall --no-deps dist/*.whl
+        shell: bash
+      - name: Installed-wheel tests outside checkout
+        shell: bash
+        run: |
+          cp -R tests "$RUNNER_TEMP/scriptspell-tests"
+          cd "$RUNNER_TEMP"
+          python -m pytest -q scriptspell-tests

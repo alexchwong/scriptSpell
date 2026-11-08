@@ -1,0 +1,23 @@
+"""Synthetic jobs. Hidden cases never enter model requests or repair feedback."""
+JOBS = [
+ dict(id='trim',task='Strip surrounding whitespace and discard empty strings, preserving order.',
+      interface={'inputs':{'items':'list of strings'},'outputs':{'out':'list of strings'}},
+      visible=({'items':[' a ','']},['a']),hidden=[({'items':[' b',' c ']},['b','c']),({'items':[' ','é']},['é'])]),
+ dict(id='dedupe',task='Remove repeated strings while preserving first occurrence order.',
+      interface={'inputs':{'items':'list of strings'},'outputs':{'out':'list of strings'}},
+      visible=({'items':['a','a','b']},['a','b']),hidden=[({'items':['c','b','c']},['c','b']),({'items':[]},[])]),
+ dict(id='group',task='Group record values by category, keeping original order within each group.',
+      interface={'inputs':{'records':'list of objects with category:string and value:integer'},'outputs':{'out':'object mapping category to list of integer values'}},
+      visible=({'records':[{'category':'a','value':1}]},{'a':[1]}),
+      hidden=[({'records':[{'category':'b','value':3},{'category':'a','value':2},{'category':'b','value':1}]},{'b':[3,1],'a':[2]}),({'records':[]},{})]),
+ dict(id='sum',task='Return the sum of quantity for records whose active field is true.',
+      interface={'inputs':{'records':'list of objects: quantity:integer, active:boolean'},'outputs':{'out':'integer'}},
+      visible=({'records':[{'quantity':3,'active':True},{'quantity':8,'active':False}]},3),
+      hidden=[({'records':[{'quantity':-2,'active':True},{'quantity':4,'active':True}]},2),({'records':[]},0)]),
+ dict(id='nested',task='Return patient.name when patient and name exist; otherwise return null. Preserve an explicit empty name.',
+      interface={'inputs':{'record':'object optionally containing patient:object with optional name:string or null'},'outputs':{'out':'string or null'}},
+      visible=({'record':{'patient':{'name':'Sample'}}},'Sample'),hidden=[({'record':{}},None),({'record':{'patient':{'name':''}}},'')]),
+ dict(id='threshold',task='Compare the exact decimal vaf string with 0.05; return true when greater than or equal. Use Decimal.',
+      interface={'inputs':{'vaf':'exact decimal string'},'outputs':{'out':'boolean'}},
+      visible=({'vaf':'0.05'},True),hidden=[({'vaf':'0.049999999999999999999999'},False),({'vaf':'0.050000000000000000000001'},True)]),
+]

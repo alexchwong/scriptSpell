@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+[project]
+name = "scriptSpell"
+version = "0.1.0"
+description = "Restricted, exact-value data transformations"
+requires-python = ">=3.10"
+license = "MIT"
+readme = "README.md"
+dependencies = ["pydantic-monty==1.5.0"]
+[project.optional-dependencies]
+dev = ["pytest>=8", "build", "psutil>=6,<8"]
+[tool.hatch.build.targets.wheel]
+packages = ["scriptspell"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+markers = ["feasibility: process-observed memory and adversarial checks"]

@@ -2,6 +2,7 @@ name: tests
 on:
   push:
   pull_request:
+  workflow_call:
   workflow_dispatch:
     inputs:
       full_grid:
@@ -12,6 +13,7 @@ permissions:
   contents: read
 jobs:
   offline:
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +27,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install '.[dev]'
       - run: python -VV
+      - name: Exercise consumer adapter example
+        run: python examples/application_adapter.py
       - run: python -m pytest -q --strict-feasibility
       - name: Keep feasibility reports
         if: ${{ always() }}
@@ -33,7 +37,7 @@ jobs:
           name: feasibility-${{ matrix.os }}-py${{ matrix.python }}
           path: reports/*.json
           if-no-files-found: warn
-      - run: python -m build --wheel
+      - run: python scripts/build_release.py --smoke
       - run: python -m pip install --force-reinstall --no-deps dist/*.whl
         shell: bash
       - name: Installed-wheel tests outside checkout

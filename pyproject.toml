@@ -3,14 +3,24 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 [project]
 name = "scriptSpell"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Restricted, exact-value data transformations"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 dependencies = ["pydantic-monty==1.5.0"]
 [project.optional-dependencies]
 dev = ["pytest>=8", "build", "psutil>=6,<8"]
+[project.urls]
+Source = "https://github.com/alexchwong/scriptSpell"
+
+[tool.hatch.version]
+path = "scriptspell/_version.py"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["scriptspell", "pyproject.toml", "README.md", "LICENSE"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["scriptspell"]
 [tool.pytest.ini_options]

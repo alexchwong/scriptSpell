@@ -97,7 +97,7 @@ image and mislabel a live child as unobservable. Do not reduce that to one sampl
 
 ## Release gates
 
-Do not describe 0.1.0 as release-certified. A gate is observed, not inferred, and BLOCKED is
+Do not describe a version as release-certified without its observed gates. A gate is observed, not inferred, and BLOCKED is
 never a pass. Record the platform and Python version with every observation.
 
 | Gate | Requirement before publication |
@@ -114,3 +114,35 @@ separate, manually measured usability result: run `check_authoring_openrouter.py
 model and key, and keep its report. Sampled RSS may miss short peaks, summed RSS
 double-counts shared pages, and the monitor thresholds are observations with a kill
 backstop, not kernel-enforced limits.
+
+## Versioning and wheel releases
+
+`scriptspell/_version.py` is the single library version source, in `X.Y.Z` form.
+Hatch metadata, `scriptspell.__version__` and `profile()['version']` must agree.
+Profile, codec and authoring prompt identifiers are separate compatibility contracts.
+Use patch versions for compatible fixes; document public interface changes in minor
+versions before 1.0. Add a matching `## X.Y.Z` heading to NEWS.
+
+The reviewed repository has only `main`; do not assume a `devel` branch exists. Prepare
+changes on a working branch. Push/PR CI runs offline and strict feasibility tests and
+builds, verifies and smoke-tests the installed wheel. `tests.yml` is also reusable by
+the release workflow. Do not add live-model calls to either workflow.
+
+`python scripts/build_release.py --smoke` builds from **committed HEAD**, never the
+working tree. It checks exact package contents, version/license metadata and NEWS;
+installs the wheel and its dependencies in a fresh environment; and tests authoring,
+validation and real execution outside the checkout. Dependency installation may need
+index access. Use `python -m build --wheel` for an uncommitted development wheel.
+Only the package, license and distribution metadata ship in the release wheel.
+
+`release.yml` follows modelSpell: a main push (or manual dispatch on main) runs CI,
+then creates a GitHub release `vX.Y.Z` with the wheel, NEWS section and hashed install
+URL. It does not publish to PyPI. An existing release is left intact; changed shipped
+files require a version bump. Documentation outside README, tests and tooling alone
+need no bump. A pre-existing tag for a new release must resolve to the tested commit.
+
+Before merging a new version to main, complete F1–F5 above, including actual WSL2
+observations, and test the committed candidate wheel in any coordinated consumer.
+Automation cannot supply the WSL2 observation or certify a downstream adapter. Do not
+replace a published wheel; fix defects in a new patch release. Never commit generated
+dist files or reports. Keep integration examples consumer-neutral and offline.

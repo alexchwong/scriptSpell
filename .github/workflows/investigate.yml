@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15, macos-latest]
-        python: ['3.10', '3.11', '3.12', '3.13']
+        python: ['3.10', '3.12', '3.13']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -29,10 +29,10 @@ jobs:
         run: |
           python -VV
           python -c "import platform;print(platform.platform(), platform.machine())"
-      - name: Stage probe
+      - name: Transport probe, no Monty and no codec
         run: |
-          python probe_transport.py --mode codec,adapter,direct \
-            --sizes 100,1000,5000,10000,20000,40000,60000 \
+          python probe_transport.py --mode transport \
+            --sizes 1000,8000,16000,32000,60000,200000 \
             --rounds 3 --timeout 20 | tee probe.jsonl
       - name: Product path under the documented 5 second wall clock
         run: |

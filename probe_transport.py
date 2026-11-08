@@ -11,8 +11,11 @@ Emits one JSON object per measurement on stdout.
 """
 import argparse
 import json
+import os
 import platform
+import signal
 import statistics
+import subprocess
 import sys
 import sysconfig
 import time
@@ -141,6 +144,81 @@ def measure_adapter(size, rounds):
     emit(mode='adapter', cell='codec_roundtrip', size=size, **timeit(once, rounds))
 
 
+def measure_transport(size, rounds, timeout):
+    """Isolate CPython's own pipe and communicate behaviour: no Monty, no codec.
+
+    Replicates runtime._invoke's transport exactly against a child that only
+    echoes the length of what it read, and compares it with a single blocking
+    communicate and with explicit write/close/read.
+    """
+    payload = json.dumps({'x': 'x' * size}).encode()
+    script = 'import sys;d=sys.stdin.buffer.read();sys.stdout.write(str(len(d)))'
+    env = {k: v for k, v in os.environ.items() if k in ('SYSTEMROOT', 'WINDIR', 'LANG')}
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+
+    def spawn():
+        return subprocess.Popen([sys.executable, '-c', script], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                cwd='/', env=env, start_new_session=True)
+
+    def reap(proc):
+        try: os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError): pass
+        try: proc.wait(timeout=5)
+        except subprocess.TimeoutExpired: pass
+        for stream in (proc.stdin, proc.stdout):
+            if stream:
+                try: stream.close()
+                except OSError: pass
+
+    def loop20():
+        """The product's polling loop, verbatim."""
+        proc = spawn(); first = True; calls = 0
+        try:
+            while True:
+                calls += 1
+                try:
+                    out, _ = proc.communicate(payload if first else None, timeout=0.02)
+                    return out, calls
+                except subprocess.TimeoutExpired:
+                    first = False
+        finally:
+            reap(proc)
+
+    def block():
+        proc = spawn()
+        try:
+            return proc.communicate(payload, timeout=timeout)[0], 1
+        finally:
+            reap(proc)
+
+    def manual():
+        proc = spawn()
+        try:
+            proc.stdin.write(payload)
+            proc.stdin.close(); proc.stdin = None
+            data = proc.stdout.read(); proc.stdout.close()
+            proc.wait(timeout=timeout)
+            return data, 1
+        finally:
+            reap(proc)
+
+    for name, call in (('loop20', loop20), ('block', block), ('manual', manual)):
+        times = []; calls = []; reported = set()
+        for _ in range(rounds):
+            started = time.perf_counter()
+            try:
+                out, count = call()
+                reported.add(len(out))
+            except BaseException as exc:
+                count = -1; reported.add(type(exc).__name__)
+            times.append(time.perf_counter() - started); calls.append(count)
+        emit(mode='transport', cell=name, size=size, payload_bytes=len(payload),
+             seconds_median=statistics.median(times), seconds_min=min(times),
+             poll_calls=round(statistics.mean(calls), 1), rounds=rounds,
+             child_reported=sorted(str(v) for v in reported)[:3])
+
+
 def measure_scriptspell(size, rounds):
     from scriptspell import run
     source = 'def transform(inputs):\n    return {"out": inputs["x"]}'
@@ -173,6 +251,8 @@ def main(argv=None):
                 measure_codec(size, args.rounds)
             elif mode == 'adapter':
                 measure_adapter(size, args.rounds)
+            elif mode == 'transport':
+                measure_transport(size, args.rounds, args.timeout)
             elif mode == 'scriptspell':
                 measure_scriptspell(size, args.rounds)
             else:

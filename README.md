@@ -2,10 +2,11 @@
 
 Headless, restricted data transformations with exact values and authoring helpers. No AgentWiz or modelSpell dependency; no model calls, UI or server.
 
-**Implementation candidate, not release-certified.** The suite and memory gate have been
-observed on Linux x86_64 under CPython 3.10 and 3.13; the adversarial gate passes on 3.13
-and one probe remains BLOCKED on 3.10. macOS Apple Silicon is still unverified. Do not treat
-this as an OS sandbox or a certified boundary for hostile multi-tenant workloads.
+**Implementation candidate, not release-certified.** The suite and both feasibility gates pass
+on Linux x86_64 under CPython 3.10 and 3.13, and on macOS Apple Silicon under CPython 3.13.
+On macOS arm64 with CPython 3.10 the adversarial gate passes but the memory gate fails: a
+60 KB exact-value round-trip exceeds the default 5 second wall clock. Do not treat this as an
+OS sandbox or a certified boundary for hostile multi-tenant workloads.
 
 ## Install and use
 

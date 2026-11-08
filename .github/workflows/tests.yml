@@ -1,5 +1,13 @@
 name: tests
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full_grid:
+        description: Run all three OS runners and Python 3.10–3.13
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -7,8 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, macos-latest]
-        python: ['3.10', '3.11', '3.12', '3.13']
+        os: ${{ fromJSON(inputs.full_grid == true && '["ubuntu-latest", "macos-15", "macos-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
+        python: ${{ fromJSON(inputs.full_grid == true && '["3.10", "3.11", "3.12", "3.13"]' || '["3.10", "3.13"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

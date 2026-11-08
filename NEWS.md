@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-- Fixed large-input transport stalls on older CPython releases, observed on macOS Python 3.10–3.12. Subprocess communication now uses one supervised call while preserving cancellation, deadlines and fail-closed cleanup.
+- Resolved large-input transport stalls observed on macOS Python 3.10–3.12 using one supervised subprocess communication call. Cleanup now retries transient process-group permission errors and remains fail-closed when termination cannot be confirmed. Validated across Ubuntu, macOS 15 and macOS latest with Python 3.10–3.13: all 12 jobs, strict-feasibility gates and installed-wheel tests passed in CI run 42477798054.
 
 - Headless restricted data transformations: submit a `transform(inputs)` script and receive exactly the declared output names. No model calls, UI or server.
 - Submitted source runs in the pinned Monty interpreter and is never evaluated by host CPython. There is no runtime fallback.

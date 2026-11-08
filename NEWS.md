@@ -1,5 +1,12 @@
 # NEWS
 
+## 0.1.1
+
+- Single-source package version and a verified, smoke-tested wheel release on main, following modelSpell.
+- Documented the consumer API, authoring/repair lifecycle and application responsibilities, including the AgentWiz adapter boundary.
+- Added an executable headless integration example and consumer regression checks.
+- Authoring response schemas now advertise the existing 4,096-character per-item limit for assumptions and unmet requirements.
+
 ## 0.1.0
 
 - Resolved large-input transport stalls observed on macOS Python 3.10–3.12 using one supervised subprocess communication call. Cleanup now retries transient process-group permission errors and remains fail-closed when termination cannot be confirmed. Validated across Ubuntu, macOS 15 and macOS latest with Python 3.10–3.13: all 12 jobs, strict-feasibility gates and installed-wheel tests passed in CI run 42477798054.

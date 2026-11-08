@@ -12,8 +12,8 @@ EXAMPLES = [
 SCHEMA = {'type': 'object', 'additionalProperties': False,
           'properties': {'source': {'type': 'string', 'maxLength': 65536},
                          'summary': {'type': 'string', 'maxLength': 4096},
-                         'assumptions': {'type': 'array', 'maxItems': 20, 'items': {'type': 'string'}},
-                         'unmet_requirements': {'type': 'array', 'maxItems': 20, 'items': {'type': 'string'}}},
+                         'assumptions': {'type': 'array', 'maxItems': 20, 'items': {'type': 'string', 'maxLength': 4096}},
+                         'unmet_requirements': {'type': 'array', 'maxItems': 20, 'items': {'type': 'string', 'maxLength': 4096}}},
           'required': ['source', 'summary', 'assumptions', 'unmet_requirements']}
 
 

@@ -1,4 +1,5 @@
-from .profile import VERSION as __version__, Limits, profile
+from ._version import __version__
+from .profile import Limits, profile
 from .source import validate_source
 from .runtime import run
 

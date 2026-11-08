@@ -4,12 +4,13 @@ from pathlib import Path
 import pytest
 
 ROOT=Path(__file__).resolve().parents[1]
-pytestmark=pytest.mark.skipif(not (ROOT/'check_authoring_openrouter.py').exists(),reason='repository-only manual runner')
+TOOLS=ROOT/'scripts'
+pytestmark=pytest.mark.skipif(not (TOOLS/'check_authoring_openrouter.py').exists(),reason='repository-only manual runner')
 
 @pytest.fixture
 def runner(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT))
-    spec=importlib.util.spec_from_file_location('authoring_runner',ROOT/'check_authoring_openrouter.py')
+    monkeypatch.syspath_prepend(str(TOOLS))
+    spec=importlib.util.spec_from_file_location('authoring_runner',TOOLS/'check_authoring_openrouter.py')
     m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     return m
 

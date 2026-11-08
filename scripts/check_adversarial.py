@@ -1,4 +1,4 @@
-"""Usage: python check_adversarial.py [--report reports/adversarial.json]."""
+"""Usage: python scripts/check_adversarial.py [--report reports/adversarial.json]."""
 import argparse
 import socket
 import tempfile

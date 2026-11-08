@@ -2,6 +2,8 @@
 
 ## 0.1.0
 
+- Fixed large-input transport stalls on older CPython releases, observed on macOS Python 3.10–3.12. Subprocess communication now uses one supervised call while preserving cancellation, deadlines and fail-closed cleanup.
+
 - Headless restricted data transformations: submit a `transform(inputs)` script and receive exactly the declared output names. No model calls, UI or server.
 - Submitted source runs in the pinned Monty interpreter and is never evaluated by host CPython. There is no runtime fallback.
 - Results are dictionaries. Accepted `values` appear only when the outcome is `ok`.

@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -48,24 +49,32 @@ def _invoke(request, limits=None, cancel=None, started=None):
     process = subprocess.Popen([sys.executable, '-c', bootstrap, root], stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd='/', env=env, start_new_session=True)
     reason = None
-    first = True
+    completed = threading.Event()
+    result = {}
+    def communicate():
+        try:
+            result['output'], _ = process.communicate(payload)
+        except BaseException as exc:
+            result['error'] = exc
+        finally:
+            completed.set()
+    # One owner for all pipe I/O. Retrying timed communicate() can lose stdin
+    # progress on older CPython versions (python/cpython#141473).
+    communication = threading.Thread(target=communicate, name='scriptspell-communicate', daemon=True)
     try:
+        communication.start()
         while True:
             if _cancelled(cancel): reason = 'cancelled'; break
-            if time.monotonic() - started >= limits.wall_seconds: reason = 'deadline'; break
-            try:
-                output, _ = process.communicate(payload if first else None, timeout=0.02)
-                break
-            except subprocess.TimeoutExpired:
-                first = False
+            remaining = limits.wall_seconds - (time.monotonic() - started)
+            if remaining <= 0: reason = 'deadline'; break
+            if completed.wait(min(0.02, remaining)): break
         if reason:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.communicate(timeout=1)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.communicate(timeout=1)
+            try: os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+            completed.wait(1)
             return done(reason)
+        if 'error' in result: return done('worker_crash')
+        output = result['output']
         if process.returncode != 0: return done('worker_crash')
         if len(output) > limits.value_bytes + 65536: return done('invalid_result')
         response = json.loads(output)
@@ -81,6 +90,12 @@ def _invoke(request, limits=None, cancel=None, started=None):
         # Last-resort process-group kill also covers a crashed helper's descendants.
         try: os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError: pass
+        # Never close buffered streams underneath their communication owner.
+        if communication.ident is not None:
+            communication.join(timeout=1)
+        if communication.is_alive():
+            _retained.append((process, communication))
+            raise RuntimeError('cleanup_failed')
         try: process.wait(timeout=1)
         except subprocess.TimeoutExpired:
             _retained.append(process)

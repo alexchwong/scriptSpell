@@ -95,7 +95,6 @@ Run repository tools from the repository root after installing the project as ab
 ```sh
 python scripts/check_memory.py
 python scripts/check_adversarial.py
-python scripts/probe_transport.py --mode codec,adapter,scriptspell --sizes 60000
 python examples/runtime_roundtrip.py
 ```
 

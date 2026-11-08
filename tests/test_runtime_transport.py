@@ -10,6 +10,48 @@ from scriptspell import Limits, run
 import scriptspell.runtime as runtime
 
 
+@pytest.mark.parametrize('failure', ['transient', 'persistent', 'signal', 'unexpected', 'wait'])
+def test_cleanup_permission_errors(monkeypatch, failure):
+    retained = []
+    monkeypatch.setattr(runtime, '_retained', retained)
+    events = []
+    class Stream:
+        def close(self):
+            assert 'join' in events
+            events.append('close')
+    class Process:
+        pid = 12345
+        stdin = stdout = Stream()
+        def wait(self, timeout):
+            events.append('wait')
+            if failure == 'wait': raise OSError('unobservable')
+    class Communication:
+        ident = 1
+        def join(self, timeout): events.append('join')
+        def is_alive(self): return False
+    probes = []
+    def killpg(pid, sig):
+        if sig:
+            if failure == 'signal': raise PermissionError
+            return
+        probes.append(True)
+        if failure == 'unexpected': raise OSError('unobservable')
+        if failure == 'persistent' or (failure == 'transient' and len(probes) == 1):
+            raise PermissionError
+        raise ProcessLookupError
+    ticks = iter(range(100))
+    monkeypatch.setattr(runtime.os, 'killpg', killpg)
+    monkeypatch.setattr(runtime.time, 'monotonic', lambda: next(ticks) / 10)
+    if failure in ('persistent', 'unexpected', 'wait'):
+        with pytest.raises(RuntimeError, match='cleanup_failed'):
+            runtime._cleanup(Process(), Communication())
+        assert retained and 'close' not in events
+        assert runtime._invoke(dict(source=''))['outcome'] == 'cleanup_failed'
+    else:
+        runtime._cleanup(Process(), Communication())
+        assert not retained and events == ['join', 'wait', 'close', 'close']
+
+
 @pytest.mark.parametrize('failure', ['thread', 'group'])
 def test_unconfirmed_cleanup_blocks_dispatch(monkeypatch, failure):
     retained = []

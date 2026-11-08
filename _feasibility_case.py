@@ -76,6 +76,8 @@ if __name__=='__main__':
         result=main(json.loads(sys.stdin.read()))
     except ImportError:
         result={'status':'BLOCKED','reason':'dependency_unavailable'}
+    except RuntimeError as exc:
+        result={'status':'FAIL','reason':'cleanup_failed' if exc.args == ('cleanup_failed',) else 'driver_exception'}
     except BaseException:
         result={'status':'FAIL','reason':'driver_exception'}
     print(json.dumps(result))

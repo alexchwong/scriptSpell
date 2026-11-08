@@ -20,6 +20,46 @@ def _cancelled(cancel):
     return cancel is not None and cancel.is_set()
 
 
+def _cleanup(process, communication):
+    """Confirm both pipe-owner exit and group disappearance, or latch closed."""
+    confirmed = False
+    try:
+        try: os.killpg(process.pid, signal.SIGKILL)
+        except OSError: pass  # Verification below, not signaling, proves cleanup.
+        if communication.ident is not None:
+            communication.join(timeout=1)
+        thread_stopped = not communication.is_alive()
+        reaped = False
+        try:
+            process.wait(timeout=1)
+            reaped = True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        cleanup_deadline = time.monotonic() + 1
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                confirmed = thread_stopped and reaped
+                break
+            except PermissionError:
+                # EPERM is not proof of disappearance. Allow a transient race
+                # to resolve, but never accept persistent uncertainty.
+                pass
+            if time.monotonic() >= cleanup_deadline:
+                break
+            time.sleep(0.01)
+        if confirmed:
+            confirmed = False
+            for stream in (process.stdin, process.stdout):
+                if stream: stream.close()
+            confirmed = True
+    finally:
+        if not confirmed:
+            _retained.append((process, communication))
+            raise RuntimeError('cleanup_failed') from None
+
+
 def _invoke(request, limits=None, cancel=None, started=None):
     started = time.monotonic() if started is None else started
     limits = (limits or Limits()).checked()
@@ -70,7 +110,7 @@ def _invoke(request, limits=None, cancel=None, started=None):
             if completed.wait(min(0.02, remaining)): break
         if reason:
             try: os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError: pass
+            except OSError: pass  # Final cleanup still kills and verifies the group.
             completed.wait(1)
             return done(reason)
         if 'error' in result: return done('worker_crash')
@@ -88,30 +128,7 @@ def _invoke(request, limits=None, cancel=None, started=None):
     finally:
         # The helper closes Monty's pool before responding, including on SIGTERM.
         # Last-resort process-group kill also covers a crashed helper's descendants.
-        try: os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
-        # Never close buffered streams underneath their communication owner.
-        if communication.ident is not None:
-            communication.join(timeout=1)
-        if communication.is_alive():
-            _retained.append((process, communication))
-            raise RuntimeError('cleanup_failed')
-        try: process.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            _retained.append(process)
-            raise RuntimeError('cleanup_failed') from None
-        cleanup_deadline = time.monotonic() + 1
-        while True:
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                break
-            if time.monotonic() >= cleanup_deadline:
-                _retained.append(process)
-                raise RuntimeError('cleanup_failed')
-            time.sleep(0.01)
-        for stream in (process.stdin, process.stdout):
-            if stream: stream.close()
+        _cleanup(process, communication)
 
 
 def run(source, inputs, output_names, *, limits=None, cancel=None):

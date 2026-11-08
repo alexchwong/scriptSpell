@@ -171,8 +171,8 @@ then publishes a new version's wheel and NEWS notes. There is no PyPI publicatio
 The optional repository-only OpenRouter experiment uses synthetic tasks and paid calls:
 
 ```sh
-python check_authoring_openrouter.py --model provider/model --task trim
-python check_authoring_openrouter.py --model provider/model --repairs 2
+python scripts/check_authoring_openrouter.py --model provider/model --task trim
+python scripts/check_authoring_openrouter.py --model provider/model --repairs 2
 ```
 
 It prompts privately for a key or reads `OPENROUTER_API_KEY`; no key is saved.

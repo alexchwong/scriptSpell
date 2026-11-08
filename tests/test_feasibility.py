@@ -8,12 +8,13 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOLS = ROOT/'scripts'
 # Installed-wheel suites outside the checkout do not include repository tools.
-pytestmark = pytest.mark.skipif(not (ROOT/'feasibility_support.py').exists(), reason='repository-only feasibility tools')
+pytestmark = pytest.mark.skipif(not (TOOLS/'feasibility_support.py').exists(), reason='repository-only feasibility tools')
 
 
 def load(name):
-    spec=importlib.util.spec_from_file_location(name,ROOT/(name+'.py'))
+    spec=importlib.util.spec_from_file_location(name,TOOLS/(name+'.py'))
     module=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -94,7 +95,7 @@ def test_report_exit_codes(tmp_path,status,code):
     dict(name='raw_print',source='while True:\n    print("x" * 1000)',raw=True),
 ])
 def test_case_driver_runs_real_fixture(spec):
-    result=subprocess.run([sys.executable,str(ROOT/'_feasibility_case.py')],input=json.dumps(spec),
+    result=subprocess.run([sys.executable,str(TOOLS/'_feasibility_case.py')],input=json.dumps(spec),
                           capture_output=True,text=True,timeout=12)
     assert result.returncode==0
     assert json.loads(result.stdout)['status']=='PASS',result.stdout
@@ -103,11 +104,11 @@ def test_case_driver_runs_real_fixture(spec):
 def test_all_script_fixtures_without_process_sampling(monkeypatch,script,count):
     # Execute every real fixture independently of process observation. This does
     # not claim memory measurements; the real CLI reports BLOCKED if unobservable.
-    monkeypatch.syspath_prepend(str(ROOT))
+    monkeypatch.syspath_prepend(str(TOOLS))
     module=load(script)
     seen=[]
     def execute(spec,**kwargs):
-        result=subprocess.run([sys.executable,str(ROOT/'_feasibility_case.py')],input=json.dumps(spec),
+        result=subprocess.run([sys.executable,str(TOOLS/'_feasibility_case.py')],input=json.dumps(spec),
                               text=True,capture_output=True,timeout=12)
         case=json.loads(result.stdout)
         assert case['status']=='PASS',(spec['name'],case)

@@ -6,8 +6,8 @@ conversion rather than to interpreter startup, process monitoring or the codec.
 
 Emits one JSON object per measurement on stdout.
 
-    python probe_transport.py --mode direct --sizes 1000,10000,60000 --rounds 3
-    python probe_transport.py --mode codec,adapter,scriptspell --sizes 60000
+    python scripts/probe_transport.py --mode direct --sizes 1000,10000,60000 --rounds 3
+    python scripts/probe_transport.py --mode codec,adapter,scriptspell --sizes 60000
 """
 import argparse
 import json

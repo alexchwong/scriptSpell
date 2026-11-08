@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - probe_transport.py
+      - scripts/probe_transport.py
       - .github/workflows/investigate.yml
 permissions:
   contents: read
@@ -24,19 +24,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install 'pydantic-monty==1.5.0'
+      - run: python -m pip install .
       - name: Environment
         run: |
           python -VV
           python -c "import platform;print(platform.platform(), platform.machine())"
       - name: Transport probe, no Monty and no codec
         run: |
-          python probe_transport.py --mode transport \
+          python scripts/probe_transport.py --mode transport \
             --sizes 1000,8000,16000,32000,60000,200000 \
             --rounds 3 --timeout 20 | tee probe.jsonl
       - name: Product path under the documented 5 second wall clock
         run: |
-          python probe_transport.py --mode scriptspell \
+          python scripts/probe_transport.py --mode scriptspell \
             --sizes 1000,60000 --rounds 2 | tee -a probe.jsonl
       - uses: actions/upload-artifact@v4
         if: always()

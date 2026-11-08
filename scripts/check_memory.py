@@ -1,4 +1,4 @@
-"""Usage: python check_memory.py [--report reports/memory.json]."""
+"""Usage: python scripts/check_memory.py [--report reports/memory.json]."""
 import argparse
 from feasibility_support import run_case, report, blocked_case
 

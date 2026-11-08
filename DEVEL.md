@@ -84,11 +84,23 @@ skipped as BLOCKED in ordinary pytest and fail under strict mode:
 python -m pytest -q -m feasibility --strict-feasibility
 ```
 
-The optional `check_memory.py` and `check_adversarial.py` wrappers call the same
+The optional `scripts/check_memory.py` and `scripts/check_adversarial.py` wrappers call the same
 implementations and need the `dev` extra for `psutil`; they are repository tooling, not
-part of the product wheel. `_feasibility_case.py` and `feasibility_support.py` are private
-test drivers. `authoring_jobs.py` holds the synthetic authoring tasks; hidden cases never
+part of the product wheel. `scripts/_feasibility_case.py` and `scripts/feasibility_support.py` are private
+test drivers. `scripts/authoring_jobs.py` holds the synthetic authoring tasks; hidden cases never
 enter model requests or repair feedback.
+
+Run repository tools from the repository root after installing the project as above:
+
+```sh
+python scripts/check_memory.py
+python scripts/check_adversarial.py
+python scripts/probe_transport.py --mode codec,adapter,scriptspell --sizes 60000
+python examples/runtime_roundtrip.py
+```
+
+Development commands and their private helpers live in `scripts/`; runnable consumer
+demonstrations live in `examples/`. Neither directory is shipped in the product wheel.
 
 Never bypass process-identity verification and never mark an unobservable measurement PASS.
 Identity is confirmed by sampling argv for the exact script path and the per-launch token
@@ -110,7 +122,7 @@ never a pass. Record the platform and Python version with every observation.
 
 CI runs strict feasibility on push and pull request and uploads the JSON reports, but a
 workflow definition is not proof that a remote job ran. Real-model authoring quality is a
-separate, manually measured usability result: run `check_authoring_openrouter.py` with a
+separate, manually measured usability result: run `scripts/check_authoring_openrouter.py` with a
 model and key, and keep its report. Sampled RSS may miss short peaks, summed RSS
 double-counts shared pages, and the monitor thresholds are observations with a kill
 backstop, not kernel-enforced limits.

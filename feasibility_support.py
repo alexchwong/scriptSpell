@@ -24,6 +24,34 @@ def _pid_namespace_visible():
         return False
 
 
+IDENTITY_SECONDS = 2.0
+
+
+def _wait_for_identity(proc, script, token, seconds=IDENTITY_SECONDS):
+    """Require the launched child's own argv before trusting its PID.
+
+    Popen returns once the child is forked, but /proc/<pid>/cmdline keeps showing
+    the parent image until the child execs. A single sample can lose that window
+    and report a live child as unobservable. Sample until the exact script path and
+    the per-launch token appear in argv, the child exits, or the deadline passes.
+
+    The requirement is unchanged: argv that never matches is still refused, so a
+    similarly named process is never trusted, inspected or signalled.
+    """
+    import psutil
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            command = psutil.Process(proc.pid).cmdline()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+        if str(script) in command and token in command:
+            return True
+        if proc.poll() is not None or time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+
+
 def run_case(spec, *, tree_mib=512, process_mib=256, timeout=12):
     import psutil
     if not _pid_namespace_visible():
@@ -35,12 +63,7 @@ def run_case(spec, *, tree_mib=512, process_mib=256, timeout=12):
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     # Verify PID visibility before sending any fixture or inspecting descendants.
     # Some containers expose host /proc with namespace-local subprocess IDs.
-    try:
-        command=psutil.Process(proc.pid).cmdline()
-        coherent = str(script) in command and token in command
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        coherent = False
-    if not coherent:
+    if not _wait_for_identity(proc, script, token):
         proc.terminate()
         try: proc.communicate(timeout=2)
         except subprocess.TimeoutExpired:

@@ -34,6 +34,49 @@ def test_mismatched_process_identity_never_signals_visible_pid(monkeypatch):
     assert r['sampled_peak_tree_mib'] is None
 
 
+def test_identity_preflight_waits_out_the_fork_exec_window(monkeypatch):
+    # Popen returns after fork; argv only shows the child once exec completes.
+    import psutil
+    support=load('feasibility_support')
+    class ExecWindow:
+        def __init__(self): self.samples=0
+        def cmdline(self):
+            self.samples+=1
+            if self.samples<3: return ['/usr/bin/python','-m','pytest','-q','--strict-feasibility']
+            return ['/usr/bin/python','/repo/_feasibility_case.py','deadbeef']
+    fake=ExecWindow()
+    monkeypatch.setattr(psutil,'Process',lambda pid:fake)
+    class Live:
+        pid=4321
+        def poll(self): return None
+    assert support._wait_for_identity(Live(),Path('/repo/_feasibility_case.py'),'deadbeef') is True
+    assert fake.samples==3
+
+
+def test_identity_preflight_refuses_argv_that_never_matches(monkeypatch):
+    import psutil
+    support=load('feasibility_support')
+    class Foreign:
+        def cmdline(self): return ['/usr/bin/python','-m','pytest']
+    monkeypatch.setattr(psutil,'Process',lambda pid:Foreign())
+    class Live:
+        pid=4321
+        def poll(self): return None
+    assert support._wait_for_identity(Live(),Path('/repo/_feasibility_case.py'),'deadbeef',seconds=0.05) is False
+
+
+def test_identity_preflight_stops_when_the_child_exits(monkeypatch):
+    import psutil
+    support=load('feasibility_support')
+    class Foreign:
+        def cmdline(self): return ['unrelated-service']
+    monkeypatch.setattr(psutil,'Process',lambda pid:Foreign())
+    class Exited:
+        pid=4321
+        def poll(self): return 0
+    assert support._wait_for_identity(Exited(),Path('/repo/_feasibility_case.py'),'deadbeef',seconds=5) is False
+
+
 @pytest.mark.parametrize('status,code',[('PASS',0),('FAIL',1),('BLOCKED',2)])
 def test_report_exit_codes(tmp_path,status,code):
     support=load('feasibility_support')

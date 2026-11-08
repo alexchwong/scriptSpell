@@ -91,6 +91,9 @@ test drivers. `authoring_jobs.py` holds the synthetic authoring tasks; hidden ca
 enter model requests or repair feedback.
 
 Never bypass process-identity verification and never mark an unobservable measurement PASS.
+Identity is confirmed by sampling argv for the exact script path and the per-launch token
+until the child has exec'd, because a single sample can catch the still-forked parent's
+image and mislabel a live child as unobservable. Do not reduce that to one sample.
 
 ## Release gates
 

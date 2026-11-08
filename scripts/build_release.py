@@ -20,7 +20,7 @@ import tarfile
 import tempfile
 import venv
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "scriptspell"
@@ -56,11 +56,39 @@ def check_news(tree: Path, version: str) -> None:
         fail(f"NEWS.md has no '## {version}' heading")
 
 
+def _data_filter_available() -> bool:
+    """True when tarfile accepts `filter` (3.12+, and the 3.11.4/3.10.12 backports).
+
+    pyproject.toml supports every 3.10 patch release, but the filter only arrived in
+    3.10.12. The stdlib docs recommend this capability check over a version test,
+    because the same minor version resolves to different patch releases on different
+    machines and CI runners.
+    """
+    return hasattr(tarfile, "data_filter")
+
+
+def _extract(archive: Path, dest: Path) -> None:
+    with tarfile.open(archive) as tar:
+        if _data_filter_available():
+            try:
+                tar.extractall(dest, filter="data")
+            except tarfile.FilterError as exc:  # only reachable when the filter exists
+                fail(f"unsafe archive member: {exc}")
+            return
+        # Older interpreters: refuse what the data filter would refuse rather than
+        # extracting unchecked. git only archives the committed tree, so this is
+        # defence in depth, not a trust boundary.
+        for member in tar.getmembers():
+            name = PurePosixPath(member.name)
+            if name.is_absolute() or ".." in name.parts or not (member.isfile() or member.isdir()):
+                fail(f"refusing archive member {member.name!r} without a data filter")
+        tar.extractall(dest)
+
+
 def export_head(dest: Path) -> None:
     archive = dest / "head.tar"
     git("archive", "--format=tar", f"--output={archive}", "HEAD")
-    with tarfile.open(archive) as tar:
-        tar.extractall(dest / "src", filter="data")
+    _extract(archive, dest / "src")
 
 
 def build_wheel(src: Path, out: Path, isolation: bool) -> Path:

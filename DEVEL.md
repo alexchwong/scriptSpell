@@ -127,6 +127,14 @@ model and key, and keep its report. Sampled RSS may miss short peaks, summed RSS
 double-counts shared pages, and the monitor thresholds are observations with a kill
 backstop, not kernel-enforced limits.
 
+Release tooling must run on every supported patch release, not just the interpreter used
+locally. Gate standard-library features by capability (`hasattr(tarfile, "data_filter")`)
+rather than by minor version: `pyproject.toml` supports all of Python 3.10, but `tarfile`'s
+extraction filter only arrived in 3.10.12, and a runner can resolve `3.10` to 3.10.11.
+`build_release.py` therefore extracts with `filter="data"` where available and validates
+members itself where it is not. Run `python scripts/build_release.py --smoke` on more than one
+interpreter before claiming the wheel can be released.
+
 ## Versioning and wheel releases
 
 `scriptspell/_version.py` is the single library version source, in `X.Y.Z` form.

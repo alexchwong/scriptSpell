@@ -1,7 +1,9 @@
 """Repository-only release checks; installed-wheel checks live in the consumer suite."""
 import importlib.util
+import io
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -56,3 +58,56 @@ def test_release_version_and_news_are_required(builder, tmp_path):
     version_path.write_text('__version__ = "invalid"\n')
     with pytest.raises(SystemExit, match='_version.py'):
         builder.read_version(tmp_path)
+
+
+def test_export_head_extracts_the_committed_tree(builder, tmp_path):
+    if shutil.which('git') is None:
+        pytest.skip('git unavailable')
+    builder.export_head(tmp_path)
+    assert (tmp_path / 'src/pyproject.toml').is_file()
+    assert (tmp_path / 'src/scriptspell/_version.py').is_file()
+
+
+def write_tar(path, members):
+    """Write one member per (name, kind) pair; kind is 'dir', 'link' or file content."""
+    with tarfile.open(path, 'w') as tar:
+        for name, kind in members:
+            info = tarfile.TarInfo(name)
+            if kind == 'dir':
+                info.type = tarfile.DIRTYPE
+                # git archive records 0755 directories; without the execute bit the
+                # extracted tree cannot be traversed and the test would fail spuriously.
+                info.mode = 0o755
+                tar.addfile(info)
+            elif kind == 'link':
+                info.type = tarfile.SYMTYPE
+                info.linkname = '/etc/passwd'
+                tar.addfile(info)
+            else:
+                data = kind.encode()
+                info.size = len(data)
+                info.mode = 0o644
+                tar.addfile(info, io.BytesIO(data))
+
+
+def test_extraction_without_data_filter_still_extracts_safe_members(builder, tmp_path, monkeypatch):
+    # The macOS runner resolves the supported 3.10 range to 3.10.11, which has no filter.
+    monkeypatch.setattr(builder, '_data_filter_available', lambda: False)
+    archive = tmp_path / 'safe.tar'
+    write_tar(archive, [('pkg/', 'dir'), ('pkg/module.py', 'x = 1')])
+    builder._extract(archive, tmp_path / 'out')
+    assert (tmp_path / 'out/pkg/module.py').read_text() == 'x = 1'
+
+
+@pytest.mark.parametrize('name,kind', [('../escape.txt', 'x = 1'),
+                                       ('/absolute.txt', 'x = 1'),
+                                       ('link', 'link')])
+def test_extraction_without_data_filter_refuses_unsafe_members(builder, tmp_path, monkeypatch, name, kind):
+    monkeypatch.setattr(builder, '_data_filter_available', lambda: False)
+    archive = tmp_path / 'unsafe.tar'
+    write_tar(archive, [(name, kind)])
+    with pytest.raises(SystemExit, match='refusing archive member'):
+        builder._extract(archive, tmp_path / 'out/inner')
+    assert not (tmp_path / 'escape.txt').exists()
+    assert not (tmp_path / 'absolute.txt').exists()
+    assert not (tmp_path / 'out/inner/link').exists()

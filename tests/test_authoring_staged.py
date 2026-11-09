@@ -1,16 +1,29 @@
 """Exercise staged authoring without paid requests."""
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
-from scripts.check_authoring_staged import evaluate, main
+import pytest
+
 from scriptspell.prompt_files import task_text
+
+ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.skipif(not (ROOT / 'scripts/check_authoring_staged.py').exists(),
+                                reason='repository-only authoring tooling')
+
+
+@pytest.fixture
+def staged(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT))
+    from scripts import check_authoring_staged
+    return check_authoring_staged
 
 
 SETTINGS = {'model': 'test/model'}
 INTERFACE = {'inputs': {'n': 'integer'}, 'outputs': {'out': 'integer'}}
 
 
-def test_three_stages_execute_and_hold_back_cases():
+def test_three_stages_execute_and_hold_back_cases(staged):
     calls = []
     replies = iter([
         json.dumps(dict(interface=INTERFACE, examples=[{'n': 1}, {'n': 2}, {'n': 3}])),
@@ -22,7 +35,7 @@ def test_three_stages_execute_and_hold_back_cases():
         calls.append(materials)
         return SimpleNamespace(text=next(replies), truncated=False, finish_reason='stop')
 
-    report = evaluate(send, SETTINGS, 'Double n', 3)
+    report = staged.evaluate(send, SETTINGS, 'Double n', 3)
     assert report['status'] == 'PASS'
     assert report['held_back'] == {'total': 2, 'passed': 2}
     assert [case['visible'] for case in report['examples']] == [True, False, False]
@@ -34,18 +47,18 @@ def test_three_stages_execute_and_hold_back_cases():
     assert [attempt['stage'] for attempt in report['attempts']] == ['inputs', 'expectations', 'python']
 
 
-def test_bad_expectation_stops_without_retry_or_source_call():
+def test_bad_expectation_stops_without_retry_or_source_call(staged):
     replies = iter(['{"examples":[{"n":1}]}', '{"outputs":{"1":{"out":true}}}'])
 
     def send(materials, settings):
         return SimpleNamespace(text=next(replies), truncated=False, finish_reason='stop')
 
-    report = evaluate(send, SETTINGS, 'Double n', 1, interface=INTERFACE)
+    report = staged.evaluate(send, SETTINGS, 'Double n', 1, interface=INTERFACE)
     assert report['failed_stage'] == 'expectations'
     assert report['attempts'][-1]['validation']['field'] == 'outputs.1.out'
     assert len(report['attempts']) == 2
 
 
-def test_staged_preview_has_correct_budget(capsys):
-    assert main(['--dry-run', '--task', '01']) == 0
+def test_staged_preview_has_correct_budget(staged, capsys):
+    assert staged.main(['--dry-run', '--task', '01']) == 0
     assert 'up to 3 paid requests' in capsys.readouterr().out

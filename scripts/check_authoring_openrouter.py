@@ -102,6 +102,8 @@ def evaluate(job,model,key,max_tokens,timeout,repairs,transport=complete):
             attempts.append(attempt)
             return {'id':job['id'],'status':'BLOCKED','attempts':attempts}
         if validation['outcome']=='ok':
+            attempt['example_input']=proposal['example_input']
+            attempt['expected_output']=proposal['expected_output']
             correct,outcome=check_case(proposal['source'],job['visible'])
             attempt.update(development_outcome=outcome,development_correct=correct)
             if outcome=='cleanup_failed':

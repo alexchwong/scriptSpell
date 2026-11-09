@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>scriptSpell playground</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#172b3b;background:#f5f7f8;font-size:15px}
+*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:36px auto;padding:0 24px 40px}
+header{display:flex;align-items:baseline;gap:15px;margin-bottom:24px}h1{font-size:26px;letter-spacing:-.7px;margin:0}header span{color:#617383;font-size:14px}
+section{background:white;border:1px solid #dce3e8;border-radius:10px;padding:20px;margin-bottom:18px}
+h2{font-size:16px;margin:0 0 14px}label{display:block;font-size:14px;font-weight:600;margin-bottom:7px}
+input,select,textarea{width:100%;font:inherit;padding:10px 12px;border:1px solid #b7c5cf;border-radius:6px;background:#fff;color:inherit}
+textarea{resize:vertical;line-height:1.5;min-height:120px}textarea.json{font:13px/1.5 ui-monospace,monospace;min-height:190px}
+input:focus,select:focus,textarea:focus{outline:2px solid #2e7787;outline-offset:1px}
+button{font:inherit;border:1px solid #bdcbd2;border-radius:6px;padding:10px 16px;background:white;color:#193849;cursor:pointer;white-space:nowrap}
+button.primary{background:#14596b;color:white;border-color:#14596b}button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:10px;align-items:end}.row>div{flex:1;min-width:0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.actions{display:flex;align-items:center;gap:14px;margin-top:14px}.muted,small{color:#617383;font-size:13px}.note{margin:12px 0 0;line-height:1.5}
+pre{font:13px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7f9;padding:15px;border-radius:6px;margin:0;max-height:430px;overflow:auto;min-height:80px}
+#status{margin:14px 0;min-height:22px}#status.error{color:#a82c36}#verdict{font-weight:600;margin:0 0 12px;min-height:22px}
+#result.match{border-color:#3a9364}#result.match #verdict{color:#237747}#result.mismatch{border-color:#c69a2f}#result.mismatch #verdict{color:#856000}#result.error{border-color:#c85a63}#result.error #verdict{color:#a82c36}
+#details{white-space:pre-wrap;font-size:13px;line-height:1.5;margin-top:12px}.section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.section-title h2{margin:0}
+@media(max-width:700px){main{margin:22px auto;padding:0 14px 30px}.grid{grid-template-columns:1fr}.row{flex-wrap:wrap}.row>div{flex-basis:100%}header{display:block}header span{display:block;margin-top:6px}}
+</style>
+</head>
+<body><main>
+<header><h1>scriptSpell</h1><span>Developer playground</span></header>
+<section aria-labelledby="connection-title"><h2 id="connection-title">OpenRouter connection</h2>
+<div class="row"><div><label for="key">API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste a key, or use OPENROUTER_API_KEY"></div><button id="saveKey">Use key</button><button id="load">Load models</button></div>
+<p id="keyState" class="muted">Keys are held in memory for this session.</p>
+<div class="grid"><div><label for="search">Find a model</label><input id="search" type="search" placeholder="Search model name or ID"></div><div><label for="model">Model</label><select id="model"><option value="">Load models to select one</option></select></div></div>
+</section>
+<section><label for="instruction">Instructions</label><textarea id="instruction" placeholder="Describe the transformation. Include example input and expected output if you have them; otherwise they will be generated."></textarea>
+<div class="actions"><button id="generate" class="primary">Generate</button><small>One paid request · up to 4,096 output tokens · no automatic execution</small></div>
+<p class="note muted">Instructions and any examples you include are sent to OpenRouter. Use synthetic data.</p></section>
+<div id="status" role="status" aria-live="polite"></div>
+<section><div class="grid"><div><label for="input">Example input</label><textarea id="input" class="json" spellcheck="false" disabled></textarea></div><div><label for="expected">Expected output</label><textarea id="expected" class="json" spellcheck="false" disabled></textarea></div></div>
+<p class="note muted">Edit either JSON object to test another case. Use strings for decimals. Keys can be reordered; array order and value types must match.</p></section>
+<section><div class="section-title"><h2>Generated Python</h2><button id="copy" disabled>Copy code</button></div><pre id="source" tabindex="0" aria-label="Generated Python, read only">Generate a transformation to see its code.</pre><div id="details"></div>
+<div class="actions"><button id="run" class="primary" disabled>Run Python</button><small>Runs locally in scriptSpell’s restricted Monty runtime.</small></div></section>
+<section id="result"><h2>Actual output</h2><p id="verdict" role="status" aria-live="polite">No result yet</p><pre id="actual"></pre><p class="note muted">A match against a model-generated example is a starting point. Review the code and try independent examples.</p></section>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const token=new URLSearchParams(location.search).get('t')||'';
+// The per-launch token is never stored in browser storage or sent in referrers.
+let busy=false, generated=false, runnable=false, models=[], proposalId=null, formatting=Promise.resolve();
+function state(){
+ for(const id of ['saveKey','load','generate','key','instruction','search','model']) $(id).disabled=busy;
+ $('generate').disabled=busy||!$('model').value||!$('instruction').value.trim();
+ for(const id of ['input','expected']) $(id).disabled=busy||!generated;
+ $('run').disabled=busy||!runnable; $('copy').disabled=busy||!generated;
+}
+function message(text,error=false){$('status').textContent=text;$('status').className=error?'error':'';}
+function stale(){ $('result').className='';$('verdict').textContent='Result out of date — run again';$('actual').textContent=''; }
+async function api(path,body){
+ const options={headers:{'X-Session-Token':token}};
+ if(body!==undefined){options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}
+ const response=await fetch(path,options); const value=await response.json();
+ if(!response.ok) throw Error(value.error||'request_failed');return value;
+}
+async function action(fn){busy=true;state();message('Working…');try{await formatting;await fn();}catch(e){message(e.message,true);}finally{busy=false;state();}}
+async function saveKey(){const key=$('key').value;if(!key.trim())return;const data=await api('/api/key',{api_key:key});$('key').value='';$('keyState').textContent=data.key_set?'API key available for this session.':'No API key set.';}
+function filterModels(){const previous=$('model').value, q=$('search').value.toLowerCase();$('model').replaceChildren();
+ const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Select a model';$('model').append(placeholder);
+ for(const item of models.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(q))){const option=document.createElement('option');option.value=item.id;option.textContent=item.name?item.name+' — '+item.id:item.id;$('model').append(option);}
+ if([...$('model').options].some(o=>o.value===previous))$('model').value=previous;state();}
+$('saveKey').onclick=()=>action(async()=>{await saveKey();message('Key updated.');});
+$('load').onclick=()=>action(async()=>{await saveKey();models=(await api('/api/models',{})).models;filterModels();message(models.length+' models loaded.');});
+$('search').oninput=filterModels;$('model').onchange=state;
+$('instruction').oninput=()=>{if(generated){runnable=false;stale();message('Instructions changed. Generate again to update the code.');}state();};
+$('generate').onclick=()=>action(async()=>{
+ generated=false;runnable=false;proposalId=null;$('source').textContent='Generating…';$('details').textContent='';$('input').value='';$('expected').value='';stale();
+ try{
+ await saveKey();const p=await api('/api/generate',{model:$('model').value,instruction:$('instruction').value});
+ proposalId=p.proposal_id;$('source').textContent=p.source;$('input').value=p.example_input_json;$('expected').value=p.expected_output_json;
+ const notes=[p.summary,...p.assumptions.map(x=>'Assumption: '+x),...p.unmet_requirements.map(x=>'Unmet requirement: '+x)];$('details').textContent=notes.join('\n');
+ generated=true;runnable=!p.unmet_requirements.length;message(runnable?'Generated. Review the example and code, then run.':'Generated with unmet requirements. Run is disabled.',!runnable);
+ $('verdict').textContent='Ready to run';
+ }catch(e){$('source').textContent='No accepted code. Update instructions or try again.';throw e;}
+});
+for(const id of ['input','expected']){
+ $(id).oninput=stale;
+ $(id).onblur=()=>{const original=$(id).value;formatting=formatting.then(async()=>{try{const data=await api('/api/format',{text:original});if($(id).value===original)$(id).value=data.text;}catch(e){message(id+': '+e.message,true);}});};
+}
+$('run').onclick=()=>action(async()=>{
+ stale();
+ try{const result=await api('/api/run',{proposal_id:proposalId,input_json:$('input').value,expected_json:$('expected').value});
+ $('result').className=result.status;$('actual').textContent=result.actual_json;
+ $('verdict').textContent=result.status==='match'?'Match':result.status==='mismatch'?'Mismatch — actual output differs from expected':'Error — '+result.outcome;
+ message('Run finished.');
+ }catch(e){$('result').className='error';$('verdict').textContent='Error — '+e.message;throw e;}
+});
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('source').textContent);message('Code copied.');}catch(e){message('Select and copy the code manually.',true);}};
+api('/api/state').then(s=>{$('keyState').textContent=s.key_set?'API key available for this session.':'Keys stay in memory. No API key set.';}).catch(e=>message(e.message,true));
+state();
+</script></body></html>

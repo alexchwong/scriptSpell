@@ -23,9 +23,10 @@ must never remove a local-only restriction or grant permission for a cloud call.
 ## Authoring and repair lifecycle
 
 1. Resolve the model role and authorize context before prompt preparation/dispatch.
-2. Convert the host contract into a JSON-serializable `interface` description containing
+2. If a host contract is available, convert it into a JSON-serializable `interface` description containing
    the expected input/output names and types. `interface` is explanatory context, not a
    schema dialect interpreted or enforced by scriptSpell. Explain special value encoding.
+   Otherwise omit it: names and types are inferred from the instructions and examples.
 3. Call `prepare_authoring(task, interface, examples, diagnostics)`. It returns
    `prompt_version`, `profile`, `response_schema`, `system` and `user`.
 4. Send the two prompt strings through the application's model client. With modelSpell,
@@ -34,8 +35,10 @@ must never remove a local-only restriction or grant permission for a cloud call.
    Use the returned JSON schema if supported; validate the reply regardless.
 5. Parse the reply as a JSON object and call `validate_proposal`. Do not extract and
    execute arbitrary fenced text. Shape/source failure means the candidate is rejected.
-6. Check `unmet_requirements` and review `assumptions`. Run the source on approved test
+6. Check `unmet_requirements` and review `assumptions`. Review the returned example input
+   and expected output, then execute the example through `run`. Add independent approved test
    inputs with `run`, check the host output contract and compare expected values.
+   Expected answers generated alongside code are not independent proof of correctness.
 7. For repair, provide bounded, approved diagnostics to a new `prepare_authoring` call.
    Its diagnostics argument is just context; the caller supplies any prior candidate
    source needed by the model. Each reply is a new untrusted proposal. Cap attempts and
@@ -52,8 +55,23 @@ as strings with a type explanation. Do not silently coerce them to binary floats
 
 The proposal object must contain exactly `source` (string, at most 65,536 characters),
 `summary` (string, at most 4,096 characters), `assumptions` and `unmet_requirements`
-(lists of at most 20 strings, each at most 4,096 characters). Source also has a UTF-8
-byte ceiling; multibyte text can pass the character ceiling and fail source validation.
+(lists of at most 20 strings, each at most 4,096 characters), plus `example_input` and
+`expected_output` dictionaries. These are required in the SAME model response as source,
+in the product API and developer UI alike. Code-only replies are rejected. The production
+prompt preserves any example values supplied in the task or `examples`, generating missing
+parts. Context `examples` continue to use the existing `inputs`/`outputs` pair format.
+
+Each returned example contains only exact JSON dictionaries/lists/strings/booleans/null/integers,
+with depth at most 32, at most 20,000 visited values, integer bit length at most 14,280 and
+at most 131,072 serialized characters. Floats, Decimal objects and custom objects are refused.
+Use decimal strings and explicitly convert calculated decimal results to strings for examples.
+`expected_output` has 1–100 nonempty names, each at most 128 characters. Use those names for
+`run` when inferring an interface; check against fixed names when the host supplied a contract.
+The validator checks shape/source without executing or certifying the example's correctness.
+
+Version 0.2.0 / prompt version 4 replaces the four-field 0.1.x proposal. Update consumer
+parsers, fixtures and persistence to retain both examples; do not strip them before validation.
+Source also has a UTF-8 byte ceiling; multibyte text can pass the character ceiling and fail source validation.
 `validate_proposal` does not reject a nonempty unmet-requirements list on its own.
 
 ## Executing a saved block

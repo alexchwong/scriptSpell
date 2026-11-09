@@ -1,7 +1,83 @@
 # Coding-agent development and maintenance directives
 
 Read this file before changing the repository. It owns agent workflow, maintenance policy
-and **what belongs in each document**.
+and **what belongs in each document**. `.clinerules` defines the handover-review workflow;
+do not change it without explicit owner instruction.
+
+## Quick start
+
+Run from the repository root on Linux, macOS or Ubuntu WSL2 (native Windows execution is unsupported):
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m pytest -q -rs
+```
+
+Work only in this checkout's `.venv`; never use system or conda Python for development.
+Use `python -m pytest`, never bare `pytest`. Never commit `.venv/`, reports or API keys.
+Installation downloads dependencies; pytest itself makes no hosted API or model calls,
+even if `OPENROUTER_API_KEY` is set. Process-observed checks can report BLOCKED skips;
+use `python -m pytest -q -m feasibility --strict-feasibility` when strict observation is required.
+Editable installs use current source; reinstall when dependencies or package metadata change.
+
+### OpenRouter live authoring quick start
+
+```bash
+. .venv/bin/activate
+python scripts/check_authoring_openrouter.py --list
+python scripts/check_authoring_openrouter.py --model qwen/qwen3-coder-next --task trim --repairs 0
+# Optional full six-task battery: at most 18 paid requests, 4096 output tokens each.
+python scripts/check_authoring_openrouter.py --model qwen/qwen3-coder-next --repairs 2
+```
+
+The runner reads `OPENROUTER_API_KEY` or prompts privately; it never saves the key.
+The trim command allows one paid request. Set `--model` to the desired OpenRouter slug.
+Inspect `reports/authoring_openrouter.json`: exit 0 is PASS, 1 FAIL, 2 BLOCKED.
+A blocked or unrun check is never a pass. Live model calls are manual and excluded from CI.
+
+### Developer playground
+
+```bash
+. .venv/bin/activate
+python -m ui                       # opens a local browser page
+python -m ui --no-browser          # prints the token-protected URL
+```
+
+Enter an OpenRouter key (or set `OPENROUTER_API_KEY`), load/search/select a model,
+enter instructions and click Generate. Each click makes one request (4096 output
+tokens, 120-second read timeout), with no retries or automatic execution. Supplied
+examples are preserved by the shared authoring instructions; missing examples are generated.
+Review/edit the JSON and click Run Python to execute in Monty. Green Match, amber Mismatch
+and red Error include text labels. Changing an example invalidates the previous result;
+changing instructions requires regeneration. Unmet requirements disable Run.
+
+`ui/` is a repository-only consumer, excluded from the wheel and sdist, following
+modelSpell's product separation. modelSpell 0.3.0 is pinned in the development extra,
+not a runtime dependency. The product library never imports UI or model transport.
+The UI uses the exact public `prepare_authoring` schema and `validate_proposal` contract,
+not a UI-only response format. Input/expected output are JSON objects; decimal literals
+are refused. Use decimal strings and explicitly return strings for decimal results.
+Large integers are formatted on the server so browser JSON parsing cannot round them.
+Actual Decimal values are displayed as `{ "$decimal": "..." }` and do not match strings.
+
+The server binds only to 127.0.0.1, checks a per-launch token and local Host/Origin,
+and holds entered keys in process memory only. No sessions, scripts or model settings
+are persisted. The page calls only this local server; modelSpell owns OpenRouter requests.
+Generation and execution share one operation slot. Closing the server cancels active
+model/runtime work and waits for handlers; do not bypass Monty cleanup ownership.
+All instructions/example context sent for generation go to OpenRouter; use synthetic data.
+The generated expected answer is a hypothesis, not independent verification.
+
+## Workflow and testing
+
+Inspect actual changes and preserve uncommitted work. Keep corrections within the agreed
+scope; no unrelated refactoring. Do not commit, push, merge, tag or publish without instruction.
+Verify handover claims; report checks actually passed, failed or blocked and the tested platform.
+Add tests for functional changes and boundary regressions, not documentation or file wording.
+Keep offline tests deterministic, with synthetic fixtures and fake model responses.
+Never weaken a check to obtain a pass. Keep README user-facing and maintenance detail here.
 
 ## Documentation ownership and placement
 
@@ -55,7 +131,10 @@ these probes, including from-import aliases and the namespace isolation regressi
 `docs/language-profile.md` for vocabulary changes; authoring instructions must remain
 derived from `profile()`.
 
-Authoring helpers are included; model transport remains outside the product library. The
+Authoring helpers are included; model transport remains outside the product library.
+The production prompt version 4 requires source, example_input and expected_output in
+one response. The optional interface is explanatory context; no UI-specific authoring schema
+is permitted. Update production consumers and the UI together when this contract changes. The
 development-only OpenRouter runner uses stdlib HTTPS directly at the owner's request. It is
 not imported by the product and never runs during automatic CI. API contract:
 https://openrouter.ai/docs/api-reference/chat-completion. Use synthetic fixtures only, cap
@@ -66,15 +145,14 @@ attacks does not certify OS isolation. Publication requires the observed gates b
 
 ## Environment and required commands
 
-Install the development extra, then run the offline suite:
+After the quick-start setup, run the offline suite:
 
 ```sh
-python -m pip install '.[dev]'
 python -m pytest -q -rs
 ```
 
-Reinstall after changing `profile.py`, `source.py`, the guest codec or the limits, so a
-previously installed copy cannot supply an old profile to the tests or the manual runner.
+Use the editable installation above for source changes. For a non-editable installation,
+reinstall after changing the profile, source policy, guest codec or limits to avoid stale code.
 
 The two monitored feasibility checks are ordinary pytest tests that write
 `reports/memory.json` and `reports/adversarial.json`. Missing process observations are
@@ -98,8 +176,8 @@ python scripts/check_adversarial.py
 python examples/runtime_roundtrip.py
 ```
 
-Development commands and their private helpers live in `scripts/`; runnable consumer
-demonstrations live in `examples/`. Neither directory is shipped in the product wheel.
+The developer UI lives in `ui/`; development commands and their private helpers live in
+`scripts/`; runnable consumer demonstrations live in `examples/`. None of these directories is shipped in the product wheel.
 
 Never bypass process-identity verification and never mark an unobservable measurement PASS.
 Identity is confirmed by sampling argv for the exact script path and the per-launch token
@@ -142,8 +220,8 @@ Profile, codec and authoring prompt identifiers are separate compatibility contr
 Use patch versions for compatible fixes; document public interface changes in minor
 versions before 1.0. Add a matching `## X.Y.Z` heading to NEWS.
 
-The reviewed repository has only `main`; do not assume a `devel` branch exists. Prepare
-changes on a working branch. Push/PR CI runs offline and strict feasibility tests and
+Develop on `devel` or a task branch; merge an authorized, tested release candidate to `main`.
+Push/PR CI runs offline and strict feasibility tests and
 builds, verifies and smoke-tests the installed wheel. `tests.yml` is also reusable by
 the release workflow. Do not add live-model calls to either workflow.
 

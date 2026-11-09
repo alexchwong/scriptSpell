@@ -8,7 +8,7 @@ import scriptspell as ss
 
 def proposal(source, **extra):
     return dict(source=source, summary='Synthetic test', assumptions=[],
-                unmet_requirements=[], **extra)
+                unmet_requirements=[], example_input={}, expected_output={"out": None}, **extra)
 
 
 def test_library_version_agrees_with_metadata_and_profile():

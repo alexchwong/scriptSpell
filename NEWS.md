@@ -1,5 +1,10 @@
 # NEWS
 
+## 0.2.0
+
+- Authoring proposals now require example input and expected output alongside code; instructions can supply or generate examples.
+- Authoring accepts an omitted interface and infers names from instructions; code-only proposals are rejected.
+
 ## 0.1.1
 
 - Single-source package version and a verified, smoke-tested wheel release on main, following modelSpell.

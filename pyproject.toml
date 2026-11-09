@@ -11,9 +11,14 @@ license-files = ["LICENSE"]
 readme = "README.md"
 dependencies = ["pydantic-monty==1.5.0"]
 [project.optional-dependencies]
-dev = ["pytest>=8", "build", "psutil>=6,<8"]
+dev = ["pytest>=8", "build", "psutil>=6,<8",
+  "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.3.0/modelspell-0.3.0-py3-none-any.whl#sha256=0dddccebec3e062871f9ee6c45461415ad18c468a3f43b0bafa1803abfe27b27",
+]
 [project.urls]
 Source = "https://github.com/alexchwong/scriptSpell"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.version]
 path = "scriptspell/_version.py"

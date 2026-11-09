@@ -1,5 +1,13 @@
 # NEWS
 
+## 0.2.1
+
+- Generate Python and up to 20 examples together, then run them through Monty.
+- Propose expected output corrections and Python repairs, compare candidate results,
+  and keep local revision history with restore and Python export.
+- Set temperature, reasoning and output budget in the OpenRouter playground and
+  choose from 20 prompt-only presets.
+
 ## 0.2.0
 
 - Authoring proposals now require example input and expected output alongside code; instructions can supply or generate examples.

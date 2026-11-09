@@ -45,30 +45,22 @@ python -m ui                       # opens a local browser page
 python -m ui --no-browser          # prints the token-protected URL
 ```
 
-Enter an OpenRouter key (or set `OPENROUTER_API_KEY`), load/search/select a model,
-enter instructions and click Generate. Each click makes one request (4096 output
-tokens, 120-second read timeout), with no retries or automatic execution. Supplied
-examples are preserved by the shared authoring instructions; missing examples are generated.
-Review/edit the JSON and click Run Python to execute in Monty. Green Match, amber Mismatch
-and red Error include text labels. Changing an example invalidates the previous result;
-changing instructions requires regeneration. Unmet requirements disable Run.
+Run the playground from the checkout. Keep `ui/` out of the wheel and sdist.
+The browser uses the public `AuthoringSession` workflow. The adapter uses pinned
+modelSpell 0.3.0 for discovery, setting checks and dispatch. The library imports
+neither UI nor model transport. Blank generation settings use provider defaults.
+Model operations make one request with a 120-second timeout. Generation does not
+execute code. Accepted corrections and proposed repairs run the suite in Monty.
 
-`ui/` is a repository-only consumer, excluded from the wheel and sdist, following
-modelSpell's product separation. modelSpell 0.3.0 is pinned in the development extra,
-not a runtime dependency. The product library never imports UI or model transport.
-The UI uses the exact public `prepare_authoring` schema and `validate_proposal` contract,
-not a UI-only response format. Input/expected output are JSON objects; decimal literals
-are refused. Use decimal strings and explicitly return strings for decimal results.
-Large integers are formatted on the server so browser JSON parsing cannot round them.
-Actual Decimal values are displayed as `{ "$decimal": "..." }` and do not match strings.
+The server binds only to 127.0.0.1 and checks a per-launch token and local Host/Origin.
+Keep provider keys in process memory and out of browser storage, journals and exports.
+Store each revision session in its generated, ignored `runs/` directory. Keep exact
+integers in server-formatted JSON strings at the browser boundary. Actual Decimal values
+use a display marker and are compared in the library before formatting.
 
-The server binds only to 127.0.0.1, checks a per-launch token and local Host/Origin,
-and holds entered keys in process memory only. No sessions, scripts or model settings
-are persisted. The page calls only this local server; modelSpell owns OpenRouter requests.
-Generation and execution share one operation slot. Closing the server cancels active
-model/runtime work and waits for handlers; do not bypass Monty cleanup ownership.
-All instructions/example context sent for generation go to OpenRouter; use synthetic data.
-The generated expected answer is a hypothesis, not independent verification.
+Serialize edits, persist journal changes atomically, and guard every accept against its
+origin revision. Do not overwrite prior exports. Closing the server cancels active
+model/runtime work and joins handlers without bypassing Monty cleanup ownership.
 
 ## Workflow and testing
 
@@ -131,10 +123,11 @@ these probes, including from-import aliases and the namespace isolation regressi
 `docs/language-profile.md` for vocabulary changes; authoring instructions must remain
 derived from `profile()`.
 
-Authoring helpers are included; model transport remains outside the product library.
-The production prompt version 4 requires source, example_input and expected_output in
-one response. The optional interface is explanatory context; no UI-specific authoring schema
-is permitted. Update production consumers and the UI together when this contract changes. The
+Keep model transport outside the product library. Preserve the version 4 single-example
+prompt and proposal shape for existing consumers. The revision workflow also supports
+count-specific multi-example generation, correction and repair. All prompt construction,
+validation, comparisons and revision semantics belong in the library. Update the public
+workflow and UI together when these contracts change. The
 development-only OpenRouter runner uses stdlib HTTPS directly at the owner's request. It is
 not imported by the product and never runs during automatic CI. API contract:
 https://openrouter.ai/docs/api-reference/chat-completion. Use synthetic fixtures only, cap

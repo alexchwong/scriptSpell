@@ -16,4 +16,6 @@ relevant sections; do not maintain a second copy of those rules here.
 5. Run the required checks, inspect the final diff and report corrections and their reasons,
    checks passed, failed or blocked, and anything left for the owner. Never weaken a check to
    obtain a pass or describe an unrun check as passed.
-6. Do not version bump unless explicitly requested to by owner.
+6. Keep authoring workflow rules and model I/O boundaries in DEVEL.md. Check that
+   playground changes exercise the same headless authoring and execution paths.
+7. Do not version bump unless explicitly requested to by owner.

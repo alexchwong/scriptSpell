@@ -1,4 +1,4 @@
-"""Developer UI behavior through the consumer adapter and real loopback HTTP."""
+"""Browser adapter behavior through real loopback HTTP and offline model replies."""
 import http.client
 import json
 from pathlib import Path
@@ -7,89 +7,25 @@ from types import SimpleNamespace
 
 import pytest
 
-# The release wheel intentionally has no UI or model transport dependency.
+from scriptspell import prepare_authoring
+from scriptspell.workflow import same_value
+
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(not (ROOT / 'ui/server.py').exists(), reason='repository-only developer UI')
 
 
 @pytest.fixture
-def ui(monkeypatch):
+def server(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(ROOT))
-    from ui import service
-    return service
-
-
-def proposal():
-    return {'source': 'def transform(inputs):\n    return {"out": inputs["text"].strip()}',
-            'summary': 'Trim', 'assumptions': [], 'unmet_requirements': [],
-            'example_input': {'text': ' a '}, 'expected_output': {'out': 'a'}}
-
-
-def test_ui_generation_uses_production_materials_once(ui, monkeypatch):
-    from scriptspell import prepare_authoring
-    calls = []
-    def complete(endpoint, model, messages, **kwargs):
-        calls.append((endpoint, model, messages, kwargs))
-        return SimpleNamespace(text=json.dumps(proposal()), truncated=False, finish_reason='stop')
-    monkeypatch.setattr(ui.modelspell, 'complete', complete)
-    p = ui.generate(ui.modelspell.Endpoint('openrouter', api_key='FAKE_KEY'), 'test/model', 'Trim whitespace', None)
-    assert p == proposal() and len(calls) == 1
-    materials = prepare_authoring('Trim whitespace')
-    assert calls[0][2][0].content.startswith(materials['system'])
-    assert calls[0][2][1].content == materials['user']
-    assert calls[0][3]['max_tokens'] == 4096
-
-
-def test_ui_rejects_code_only_or_truncated_proposals(ui, monkeypatch):
-    for p, truncated in [({'source': proposal()['source']}, False), (proposal(), True)]:
-        monkeypatch.setattr(ui.modelspell, 'complete', lambda *a, **k: SimpleNamespace(
-            text=json.dumps(p), truncated=truncated, finish_reason='stop'))
-        with pytest.raises(ui.UIError):
-            ui.generate(ui.modelspell.Endpoint('openrouter'), 'test/model', 'Trim', None)
-
-
-def test_edited_examples_execute_and_compare_strictly(ui):
-    stop = threading.Event()
-    result = ui.execute(proposal(), '{"text":" b "}', '{"out":"b"}', stop)
-    assert result['status'] == 'match' and json.loads(result['actual_json']) == {'out': 'b'}
-    assert ui.execute(proposal(), '{"text":" b "}', '{"out":"a"}', stop)['status'] == 'mismatch'
-    assert not ui.same_value({'x': True}, {'x': 1})
-    assert not ui.same_value({'x': [1, 2]}, {'x': [2, 1]})
-    assert ui.same_value({'a': 1, 'b': None}, {'b': None, 'a': 1})
-    stop.set()
-    stopped = ui.execute(proposal(), '{"text":" b "}', '{"out":"b"}', stop)
-    assert stopped['status'] == 'error' and stopped['outcome'] == 'cancelled'
-    stop.clear()
-    bad = proposal(); bad['source'] = 'def transform(inputs):\n    return {"bad": 1}'
-    assert ui.execute(bad, '{}', '{}', stop)['status'] == 'error'
-    bad['unmet_requirements'] = ['Host I/O unavailable']
-    with pytest.raises(ui.UIError, match='requirements_unmet'):
-        ui.execute(bad, '{}', '{}', stop)
-
-
-@pytest.mark.parametrize('text', ['{"x":1,"x":2}', '{"x":NaN}', '{"x":0.5}', '[]', '{'])
-def test_bad_example_json_refused(ui, text):
-    with pytest.raises(ui.UIError):
-        ui.parse_example(text)
-
-
-def test_large_integer_survives_format_and_run(ui):
-    p = proposal(); p['source'] = 'def transform(inputs):\n    return {"out": inputs["n"]}'
-    text = '{"n":9007199254740993}'
-    assert ui.parse_example(ui.pretty(ui.parse_example(text)))['n'] == 9007199254740993
-    result = ui.execute(p, text, '{"out":9007199254740993}', threading.Event())
-    assert result['status'] == 'match' and '9007199254740993' in result['actual_json']
-
-
-@pytest.fixture
-def server(ui, monkeypatch):
     from ui.server import UIServer
     monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
-    s = UIServer()
-    thread = threading.Thread(target=s.serve_forever)
+    server = UIServer(runs=tmp_path)
+    thread = threading.Thread(target=server.serve_forever)
     thread.start()
-    yield s
-    s.shutdown(); s.close(); thread.join(3)
+    yield server
+    server.shutdown()
+    server.close()
+    thread.join(3)
     assert not thread.is_alive()
 
 
@@ -101,46 +37,99 @@ def request(server, path, body=None, token=True, headers=None):
     hdr.update(headers or {})
     conn.request('GET' if body is None else 'POST', path, body=None if body is None else json.dumps(body), headers=hdr)
     response = conn.getresponse()
-    status, data = response.status, response.read()
+    status, data = response.status, json.loads(response.read())
     conn.close()
     return status, data
 
 
-def test_http_key_protection_and_single_operation(server, ui, monkeypatch):
+def test_http_key_protection_and_single_operation(server, monkeypatch):
+    import modelspell
     assert request(server, '/api/state', token=False)[0] == 403
     assert request(server, '/api/key', {'api_key': 'secret'}, headers={'Origin': 'https://evil.invalid'})[0] == 403
     assert request(server, '/api/state', headers={'Host': 'evil.invalid'})[0] == 403
     assert request(server, '/api/key', {'api_key': 'secret'})[0] == 200
-    assert b'secret' not in request(server, '/api/state')[1]
+    status, state = request(server, '/api/state')
+    assert status == 200 and 'secret' not in str(state) and len(state['presets']) == 20
     captured = []
-    monkeypatch.setattr(ui.modelspell, 'list_models', lambda endpoint, **kw: captured.append(endpoint) or [SimpleNamespace(id='test/model', name='Test')])
+    monkeypatch.setattr(modelspell, 'list_models', lambda endpoint, **kw: captured.append(endpoint) or [SimpleNamespace(
+        id='test/model', name='Test', supports_reasoning=False)])
     status, data = request(server, '/api/models', {})
-    assert status == 200 and json.loads(data)['models'][0]['id'] == 'test/model'
+    assert status == 200 and data['models'][0]['id'] == 'test/model'
     assert captured[0].api_key == 'secret'
     with server.operation:
         assert request(server, '/api/models', {})[0] == 409
-    status, data = request(server, '/api/format', {'text': '{"n":9007199254740993}'})
-    assert status == 200 and '9007199254740993' in json.loads(data)['text']
+    assert request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Trim', 'reasoning': 'low'}) == (
+        502, {'error': 'UnsupportedSetting'})
+    assert b'secret' not in (server.session.directory / 'journal.json').read_bytes()
 
 
-def test_http_generate_does_not_execute_and_run_uses_server_source(server, ui, monkeypatch):
-    monkeypatch.setattr(ui.modelspell, 'complete', lambda *a, **kw: SimpleNamespace(text=json.dumps(proposal()), truncated=False, finish_reason='stop'))
-    real_run = ui.run
+def test_http_generation_edits_correction_and_preserves_draft_on_failure(server, monkeypatch):
+    import modelspell
     calls = []
-    def counted(*a, **kw):
-        calls.append(a)
-        return real_run(*a, **kw)
-    monkeypatch.setattr(ui, 'run', counted)
-    status, data = request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Trim'})
-    assert status == 200 and not calls
-    candidate_id = json.loads(data)['proposal_id']
-    assert json.loads(data)['example_input_json'] == ui.pretty(proposal()['example_input'])
-    status, data = request(server, '/api/run', {'proposal_id': candidate_id, 'source': 'evil', 'input_json': '{"text":"z "}', 'expected_json': '{"out":"z"}'})
-    assert status == 200 and json.loads(data)['status'] == 'match'
-    assert len(calls) == 1 and calls[0][0] == proposal()['source']
-    assert request(server, '/api/run', {'proposal_id': 'old-tab', 'input_json': '{}', 'expected_json': '{}'})[0] == 400
-    assert len(calls) == 1
-    # A rejected regeneration cannot leave the previous candidate executable.
-    monkeypatch.setattr(ui.modelspell, 'complete', lambda *a, **kw: SimpleNamespace(text='{}', truncated=False, finish_reason='stop'))
-    assert request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Other'})[0] == 400
-    assert request(server, '/api/run', {'input_json': '{}', 'expected_json': '{}'})[0] == 400
+    source = 'def transform(inputs):\n    return {"out": inputs["n"]}'
+    proposal = dict(source=source, summary='Echo', assumptions=[], unmet_requirements=[],
+                    example_input={'n': 9007199254740993}, expected_output={'out': None})
+
+    def complete(endpoint, model, messages, **settings):
+        calls.append((messages, settings))
+        payload = proposal if len(calls) == 1 else {'expected_output': {'out': 9007199254740993}}
+        return SimpleNamespace(text=json.dumps(payload), truncated=len(calls) > 2, finish_reason='stop')
+
+    monkeypatch.setattr(modelspell, 'complete', complete)
+    body = {'model': 'test/model', 'instruction': 'Echo', 'temperature': 0.25,
+            'max_tokens': 300, 'reasoning': 'medium'}
+    status, data = request(server, '/api/generate', body)
+    assert status == 200 and len(calls) == 1
+    materials = prepare_authoring('Echo')
+    assert calls[0][0][0].content.startswith(materials['system'])
+    assert calls[0][0][1].content == materials['user']
+    assert {k: calls[0][1][k] for k in ('temperature', 'max_tokens', 'reasoning')} == {
+        k: body[k] for k in ('temperature', 'max_tokens', 'reasoning')}
+    active = data['active_id']
+    case = data['revision']['draft']['examples'][0]
+    assert case['result'] is None and '9007199254740993' in case['input_json']
+
+    status, data = request(server, '/api/run', {'revision_id': active, 'source': 'evil'})
+    assert status == 200
+    assert data['revision']['draft']['examples'][0]['result']['status'] == 'mismatch'
+    assert request(server, '/api/run', {'revision_id': 'old-tab'})[1]['error'] == 'stale_revision'
+
+    status, data = request(server, '/api/correct', dict(body, revision_id=active, example_id=case['id'],
+                                                        guidance='Return the input number'))
+    assert status == 200 and data['active_id'] == active
+    attempt = data['attempt']
+    assert json.loads(attempt['previous_expected_json']) == {'out': None}
+    assert '9007199254740993' in attempt['candidate']['examples'][0]['expected_json']
+    status, data = request(server, '/api/decide', {'revision_id': active, 'attempt_id': attempt['id'], 'accept': True})
+    assert status == 200 and data['active_id'] != active
+    assert data['revision']['draft']['examples'][0]['result']['status'] == 'pass'
+    active = data['active_id']
+
+    status, data = request(server, '/api/generate', dict(body, revision_id=active))
+    assert status == 400 and data['error'] == 'incomplete_model_response'
+    assert request(server, '/api/state')[1]['active_id'] == active
+    status, data = request(server, '/api/edit', {'revision_id': active, 'example_id': case['id'],
+                                                 'input_json': '{"n":7}', 'expected_json': '{"out":7}'})
+    assert status == 200 and data['revision']['draft']['examples'][0]['result'] is None
+    assert json.loads(data['revision']['draft']['examples'][0]['expected_json']) == {'out': 7}
+
+
+@pytest.mark.parametrize('invalid', ['{"n":1,"n":2}', '{"n":NaN}', '{"n":0.5}', '[]', '{'])
+def test_bad_edited_json_is_refused(server, monkeypatch, invalid):
+    import modelspell
+    proposal = dict(source='def transform(inputs):\n    return {"out": inputs["n"]}',
+                    summary='Echo', assumptions=[], unmet_requirements=[], example_input={'n': 1},
+                    expected_output={'out': 1})
+    monkeypatch.setattr(modelspell, 'complete', lambda *a, **k: SimpleNamespace(
+        text=json.dumps(proposal), truncated=False, finish_reason='stop'))
+    status, data = request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Echo'})
+    assert status == 200
+    assert request(server, '/api/edit', {'revision_id': data['active_id'],
+                                        'example_id': data['revision']['draft']['examples'][0]['id'],
+                                        'input_json': invalid, 'expected_json': '{"out":1}'})[0] == 400
+
+
+def test_exact_comparison():
+    assert not same_value({'x': True}, {'x': 1})
+    assert not same_value({'x': [1, 2]}, {'x': [2, 1]})
+    assert same_value({'a': 1, 'b': None}, {'b': None, 'a': 1})

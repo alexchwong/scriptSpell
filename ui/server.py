@@ -1,4 +1,4 @@
-"""Local, token-protected developer server. No persistence, automatic execution or retries."""
+"""Local, token-protected developer server. Browser adapter for the headless authoring session."""
 import argparse
 import json
 import os
@@ -10,20 +10,22 @@ from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 import modelspell
+from scriptspell import AuthoringSession
 from . import service
+from .presets import PRESETS
 
 
 class UIServer(ThreadingHTTPServer):
     # Join handlers after cancellation so a Monty invocation retains cleanup ownership.
     daemon_threads = False
 
-    def __init__(self, port=0):
+    def __init__(self, port=0, *, runs='runs'):
         super().__init__(('127.0.0.1', port), Handler)
         self.token = secrets.token_urlsafe(32)
         self.operation = threading.Lock()
         self.api_key = ''
-        self.proposal = None
-        self.proposal_id = ''
+        self.session = AuthoringSession(runs)
+        self.models = {}
         self.model_cancel = modelspell.CancelHandle()
         self.run_cancel = threading.Event()
         self.closing = False
@@ -42,7 +44,6 @@ class UIServer(ThreadingHTTPServer):
         self.run_cancel.set()
         self.server_close()
         self.api_key = ''
-        self.proposal = None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -78,7 +79,7 @@ class Handler(BaseHTTPRequestHandler):
         token = self.headers.get('X-Session-Token', '')
         if self.command == 'GET' and urlsplit(self.path).path == '/':
             token = parse_qs(urlsplit(self.path).query).get('t', [''])[0]
-        return secrets.compare_digest(token, self.server.token)
+        return token.isascii() and secrets.compare_digest(token, self.server.token)
 
     def do_GET(self):
         if not self.authorised():
@@ -87,7 +88,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/':
             return self.send(200, self.server.index, 'text/html; charset=utf-8')
         if path == '/api/state':
-            return self.send(200, {'key_set': bool(self.server.api_key or os.getenv('OPENROUTER_API_KEY'))})
+            return self.send(200, dict(service.view(self.server.session), presets=PRESETS,
+                                       key_set=bool(self.server.api_key or os.getenv('OPENROUTER_API_KEY'))))
         self.send(404, {'error': 'not_found'})
 
     def do_POST(self):
@@ -108,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length)
             if len(raw) != length:
                 raise service.UIError('invalid_request')
-            body = json.loads(raw)
+            body = service.parse_json(raw.decode('utf-8'), max_chars=524288)
             if type(body) is not dict:
                 raise service.UIError('invalid_request')
             self.route(urlsplit(self.path).path, body)
@@ -119,7 +121,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send(502, {'error': type(exc).__name__})
         except RuntimeError:
             self.send(503, {'error': 'cleanup_failed'})
-        except (ValueError, TypeError, RecursionError, KeyError, UnicodeError, OSError):
+        except OSError:
+            self.send(500, {'error': 'local_io_failed'})
+        except (ValueError, TypeError, RecursionError, KeyError, UnicodeError):
             self.send(400, {'error': 'invalid_request'})
         finally:
             self.server.operation.release()
@@ -134,33 +138,53 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {'key_set': bool(s.api_key or os.getenv('OPENROUTER_API_KEY'))})
         if path == '/api/models':
             models = modelspell.list_models(s.endpoint(), timeout=20)
+            s.models = {m.id: m for m in models}
             return self.send(200, {'models': [{'id': m.id, 'name': m.name} for m in models]})
-        if path == '/api/generate':
-            s.proposal = None
-            s.proposal_id = ''
+
+        session = s.session
+        revision_id = body.get('revision_id')
+        if path == '/api/revision':
+            return self.send(200, service.view(session, revision_id))
+        if path == '/api/attempt':
+            return self.send(200, service.attempt_view(session, body.get('attempt_id')))
+        if path == '/api/export':
+            return self.send(200, session.export(revision_id))
+
+        if path in ('/api/generate', '/api/correct', '/api/improve'):
             s.model_cancel = modelspell.CancelHandle()
             if s.closing:
                 s.model_cancel.cancel()
-            proposal = service.generate(s.endpoint(), body.get('model'), body.get('instruction'), s.model_cancel)
-            s.proposal = proposal
-            s.proposal_id = secrets.token_urlsafe(16)
-            return self.send(200, {'proposal_id': s.proposal_id, 'source': proposal['source'], 'summary': proposal['summary'],
-                                  'assumptions': proposal['assumptions'],
-                                  'unmet_requirements': proposal['unmet_requirements'],
-                                  'example_input_json': service.pretty(proposal['example_input']),
-                                  'expected_output_json': service.pretty(proposal['expected_output'])})
-        if path == '/api/format':
-            value = service.parse_example(body.get('text'))
-            return self.send(200, {'text': service.pretty(value)})
-        if path == '/api/run':
-            if not s.proposal_id or body.get('proposal_id') != s.proposal_id:
-                raise service.UIError('stale_proposal')
+            dispatch = service.dispatch(s.endpoint(), s.model_cancel, s.models)
+            settings = service.settings(body)
+        if path in ('/api/run', '/api/improve', '/api/decide'):
             s.run_cancel = threading.Event()
             if s.closing:
                 s.run_cancel.set()
-            return self.send(200, service.execute(s.proposal, body.get('input_json'),
-                                                 body.get('expected_json'), s.run_cancel))
-        self.send(404, {'error': 'not_found'})
+        attempt_id = None
+        if path == '/api/generate':
+            session.generate(revision_id, dispatch, settings, body.get('instruction'),
+                             example_count=body.get('example_count', 1))
+        elif path == '/api/run':
+            session.run(revision_id, cancel=s.run_cancel)
+        elif path == '/api/edit':
+            session.edit(revision_id, body.get('example_id'),
+                         service.parse_json(body.get('input_json')),
+                         service.parse_json(body.get('expected_json')))
+        elif path == '/api/correct':
+            attempt_id = session.correct(revision_id, dispatch, settings, body.get('example_id'), body.get('guidance'))
+        elif path == '/api/improve':
+            attempt_id = session.improve(revision_id, dispatch, settings, body.get('example_ids'),
+                                         body.get('guidance', ''), cancel=s.run_cancel)
+        elif path == '/api/decide':
+            session.decide(revision_id, body.get('attempt_id'), body.get('accept'), cancel=s.run_cancel)
+        elif path == '/api/restore':
+            session.restore(revision_id, body.get('selected_id'))
+        else:
+            return self.send(404, {'error': 'not_found'})
+        view = service.view(session)
+        if attempt_id is not None:
+            view['attempt'] = service.attempt_view(session, attempt_id)
+        self.send(200, view)
 
 
 def main(argv=None):

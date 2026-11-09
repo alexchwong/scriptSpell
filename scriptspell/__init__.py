@@ -1,8 +1,16 @@
 from ._version import __version__
-from .profile import Limits, profile
-from .source import validate_source
-from .runtime import run
-
-__all__ = ['Limits', 'profile', 'validate_source', 'run', 'prepare_authoring', 'validate_proposal']
-
 from .authoring import prepare_authoring, validate_proposal
+from .journal import AuthoringSession
+from .profile import Limits, profile
+from .runtime import run
+from .source import validate_source
+from .workflow import (
+    AuthoringError, correct_expected, edit_example, generate_draft, improve_python,
+    run_examples, validate_model_settings,
+)
+
+__all__ = [
+    'Limits', 'profile', 'validate_source', 'run', 'prepare_authoring', 'validate_proposal',
+    'AuthoringError', 'AuthoringSession', 'correct_expected', 'edit_example', 'generate_draft',
+    'improve_python', 'run_examples', 'validate_model_settings',
+]

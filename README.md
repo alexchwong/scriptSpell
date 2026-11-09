@@ -167,8 +167,10 @@ reasoning, token cap, timeout and report path with `--temperature`, `--reasoning
 `--max-tokens`, `--timeout`, and `--report`. The default report is
 `reports/authoring_presets.json`. Exit codes are 0 for PASS, 1 for FAIL, and 2 for BLOCKED.
 A blocked provider or runtime stops the batch. A pass measures whether the generated
-Python matches the model-generated expectations. The report includes both values for
-review.
+Python matches the model-generated expectations. The report includes both values, plus each attempt's prompt, raw reply, finish
+metadata, and validation details. Rejected source includes any validator issues
+with line numbers. Review the report before sharing because it contains prompt
+and model content.
 
 ## Public API
 

@@ -14,9 +14,42 @@ DEFAULT_MODEL = 'qwen/qwen3-coder-next'
 BLOCKED_OUTCOMES = {'cleanup_failed', 'dependency_unavailable', 'platform_unavailable', 'worker_crash'}
 
 
-def evaluate(send, settings, instruction, example_count):
+def evaluate(send, settings, instruction, example_count, *, api_key=''):
+    attempts = []
+
+    def capture(text):
+        if api_key:
+            text = text.replace(api_key, '[REDACTED]')
+        return dict(text=text[:6291456], truncated_for_report=len(text) > 6291456)
+
+    def record(materials, model_settings):
+        entry = dict(attempt=len(attempts) + 1, request=materials)
+        attempts.append(entry)
+        try:
+            response = send(materials, model_settings)
+        except modelspell.ModelSpellError as exc:
+            entry['provider_error'] = dict(type=type(exc).__name__, http_status=getattr(exc, 'status', None))
+            body = getattr(exc, 'body', '')
+            if body:
+                entry['provider_error']['body'] = capture(body)
+            raise
+        entry['response'] = dict(capture(response.text), finish_reason=response.finish_reason,
+                                 truncated=response.truncated, model=getattr(response, 'model', None),
+                                 provider=getattr(response, 'provider', None),
+                                 response_id=getattr(response, 'response_id', None))
+        return response
+
+    def validation(details):
+        if attempts:
+            attempts[-1]['validation'] = details
+
+    result = _evaluate(record, settings, instruction, example_count, validation)
+    return dict(result, attempts=attempts)
+
+
+def _evaluate(send, settings, instruction, example_count, on_attempt):
     try:
-        draft = generate_draft(send, settings, instruction, example_count=example_count)
+        draft = generate_draft(send, settings, instruction, example_count=example_count, on_attempt=on_attempt)
         if draft['unmet_requirements']:
             return dict(status='FAIL', outcome='requirements_unmet', source=draft['source'],
                         unmet_requirements=draft['unmet_requirements'])
@@ -25,7 +58,7 @@ def evaluate(send, settings, instruction, example_count):
         return dict(status='BLOCKED', outcome=type(exc).__name__)
     except AuthoringError as exc:
         status = 'BLOCKED' if exc.code in BLOCKED_OUTCOMES else 'FAIL'
-        return dict(status=status, outcome=exc.code)
+        return dict(status=status, outcome=exc.code, details=exc.details)
     except RuntimeError as exc:
         if exc.args != ('cleanup_failed',):
             raise
@@ -103,7 +136,7 @@ def main(argv=None):
     interrupted = False
     try:
         for task_id, title, level, instruction in jobs:
-            result = evaluate(send, settings, instruction, args.examples)
+            result = evaluate(send, settings, instruction, args.examples, api_key=key)
             results.append(dict(result, task=task_id, title=title, difficulty=level, instruction=instruction))
             print(f"{result['status']} {task_id} {title} [{level}]", flush=True)
             save()

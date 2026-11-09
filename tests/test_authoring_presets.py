@@ -77,3 +77,29 @@ def test_transport_failure_stops_batch(runner, monkeypatch, tmp_path):
     assert report['status'] == 'BLOCKED' and report['tasks_requested'] == 20
     assert report['results'][0]['outcome'] == 'AuthError'
     assert 'test-only-secret' not in path.read_text()
+
+
+def test_report_keeps_both_attempts_and_rejected_source(runner):
+    raw = '{"source":'
+    invalid = {
+        'source': 'def transform(inputs):\n    return open("file")',
+        'summary': 'Read a file', 'assumptions': [], 'unmet_requirements': [],
+        'example_input': {}, 'expected_output': {'out': ''},
+    }
+    responses = iter((raw, json.dumps(invalid)))
+
+    def send(materials, settings):
+        return SimpleNamespace(text=next(responses), truncated=False, finish_reason='stop',
+                               model='test/model', provider='test', response_id='response')
+
+    result = runner.evaluate(send, {'model': 'test/model'}, 'Read a file', 1)
+    first, second = result['attempts']
+    assert first['response']['text'] == raw
+    assert first['validation']['outcome'] == 'invalid_json'
+    assert first['validation']['line'] == 1
+    assert first['request']['user'] == second['request']['user']
+    assert 'Return one raw JSON object' in second['request']['system']
+    assert json.loads(second['response']['text'])['source'] == invalid['source']
+    assert second['validation']['field'] == 'source'
+    assert any(issue['line'] == 2 for issue in second['validation']['issues'])
+    assert result['outcome'] == 'source_rejected'

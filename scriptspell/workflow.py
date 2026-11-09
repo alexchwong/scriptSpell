@@ -20,6 +20,10 @@ _JSON_FENCE = re.compile(r'```(?:json)?[ \t]*\r?\n(.*)\r?\n```', re.IGNORECASE |
 class AuthoringError(ValueError):
     """A safe-to-display authoring validation code."""
 
+    def __init__(self, code, **details):
+        super().__init__(code)
+        self.details = details
+
     @property
     def code(self):
         return str(self)
@@ -43,6 +47,9 @@ def parse_json(text, *, max_chars=262144):
         return json.loads(text, object_pairs_hook=unique, parse_constant=constant)
     except AuthoringError:
         raise
+    except json.JSONDecodeError as exc:
+        raise AuthoringError('invalid_json', reason=exc.msg, line=exc.lineno,
+                             column=exc.colno, position=exc.pos) from None
     except (ValueError, RecursionError):
         raise AuthoringError('invalid_json') from None
 
@@ -132,8 +139,9 @@ def _generation_materials(instruction, count, interface, supplied):
         dict(task=instruction, interface=interface, examples=supplied, example_count=count), _schema(properties))
 
 
-def generate_draft(dispatch, settings, instruction, *, example_count=1, interface=None, examples=()):
-    """Request one complete draft. Structured examples use the keys inputs and/or outputs."""
+def generate_draft(dispatch, settings, instruction, *, example_count=1, interface=None, examples=(),
+                   on_attempt=None):
+    """Generate a draft. Optionally report each attempt's validation outcome to on_attempt."""
     if type(instruction) is not str or not instruction.strip():
         raise AuthoringError('instruction_required')
     if type(example_count) is not int or not 1 <= example_count <= 20:
@@ -151,9 +159,20 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
 
     settings = validate_model_settings(**settings)
     materials = _generation_materials(instruction, example_count, interface, examples)
+    def attempt(request):
+        try:
+            proposal = _response(dispatch, settings, request)
+            draft = _validate_draft(proposal, request, instruction, example_count, examples)
+        except AuthoringError as exc:
+            if on_attempt is not None:
+                on_attempt(dict(outcome=exc.code, **exc.details))
+            raise
+        if on_attempt is not None:
+            on_attempt({'outcome': 'ok'})
+        return draft
+
     try:
-        proposal = _response(dispatch, settings, materials)
-        return _validate_draft(proposal, materials, instruction, example_count, examples)
+        return attempt(materials)
     except AuthoringError as exc:
         if exc.code not in _FORMAT_ERRORS:
             raise
@@ -167,46 +186,65 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
                  '\nReturn one raw JSON object, with no Markdown or surrounding text. '
                  'Include source and summary as strings, and assumptions and unmet_requirements '
                  'as arrays of strings. ' + fields)
-    proposal = _response(dispatch, settings, retry)
-    return _validate_draft(proposal, retry, instruction, example_count, examples)
+    return attempt(retry)
 
 
 def _validate_draft(proposal, materials, instruction, example_count, examples):
-    if type(proposal) is not dict or set(proposal) != set(materials['response_schema']['required']):
-        raise AuthoringError('invalid_proposal')
+    _require_fields(proposal, materials['response_schema']['required'], '$')
     if example_count == 1:
         cases = [{key: proposal.pop(key) for key in PAIR}]
     else:
         cases = proposal.pop('examples')
     if type(cases) is not list or len(cases) != example_count:
-        raise AuthoringError('wrong_example_count')
+        raise AuthoringError('wrong_example_count', field='examples', expected_count=example_count,
+                             actual_count=len(cases) if type(cases) is list else None,
+                             actual_type=type(cases).__name__)
     output_names = None
     for index, case in enumerate(cases):
-        if type(case) is not dict or set(case) != set(PAIR):
-            raise AuthoringError('invalid_proposal')
+        path = f'examples[{index}]' if example_count > 1 else '$'
+        _require_fields(case, PAIR, path)
         if index == 0:
             checked = validate_proposal(dict(proposal, **case))
             if checked['outcome'] != 'ok':
-                raise AuthoringError(checked['outcome'])
+                details = {key: value for key, value in checked.items() if key != 'outcome'}
+                if example_count > 1 and details.get('field') in PAIR:
+                    details['field'] = f'{path}.{details["field"]}'
+                if checked['outcome'] == 'source_rejected':
+                    details['field'] = 'source'
+                raise AuthoringError(checked['outcome'], **details)
             output_names = case['expected_output'].keys()
         else:
-            _check_pair(case, output_names)
+            _check_pair(case, output_names, path=path)
         if index < len(examples):
             for key, field in zip(('inputs', 'outputs'), PAIR):
                 if key in examples[index] and not same_value(case[field], examples[index][key]):
-                    raise AuthoringError('supplied_example_changed')
+                    raise AuthoringError('supplied_example_changed', field=f'{path}.{field}')
         case['id'] = uuid4().hex
     return dict(proposal, instruction=instruction, examples=cases)
 
 
-def _check_pair(case, output_names):
-    try:
-        _check_example(case['example_input'])
-        _check_example(case['expected_output'])
-        if case['expected_output'].keys() != output_names:
-            raise ValueError('output_names')
-    except (ValueError, TypeError, RecursionError, OverflowError):
-        raise AuthoringError('invalid_example_contract') from None
+def _require_fields(value, required, path):
+    if type(value) is not dict:
+        raise AuthoringError('invalid_proposal', field=path, reason='expected_object',
+                             actual_type=type(value).__name__)
+    missing = set(required) - value.keys()
+    unexpected = value.keys() - set(required)
+    if missing or unexpected:
+        raise AuthoringError('invalid_proposal', field=path, missing=sorted(missing),
+                             unexpected=sorted(unexpected))
+
+
+def _check_pair(case, output_names, *, path='$'):
+    for key in PAIR:
+        try:
+            _check_example(case[key])
+        except (ValueError, TypeError, RecursionError, OverflowError):
+            raise AuthoringError('invalid_example_contract', field=f'{path}.{key}',
+                                 reason='invalid_example_value') from None
+    if case['expected_output'].keys() != output_names:
+        raise AuthoringError('invalid_example_contract', field=f'{path}.expected_output',
+                             reason='output_names_differ', expected_keys=sorted(output_names),
+                             actual_keys=sorted(case['expected_output']))
 
 
 def edit_example(draft, example_id, inputs, expected):

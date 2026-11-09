@@ -100,18 +100,22 @@ def prepare_authoring(task, interface=None, examples=(), diagnostics=None):
 
 def validate_proposal(proposal):
     if type(proposal) is not dict or set(proposal) != set(SCHEMA['required']):
-        return {'outcome': 'invalid_proposal'}
-    if any(type(proposal[k]) is not str or len(proposal[k]) > n for k, n in [('source', 65536), ('summary', 4096)]):
-        return {'outcome': 'invalid_proposal'}
+        return {'outcome': 'invalid_proposal', 'field': '$', 'reason': 'expected_proposal_fields'}
+    for key, limit in [('source', 65536), ('summary', 4096)]:
+        if type(proposal[key]) is not str or len(proposal[key]) > limit:
+            return {'outcome': 'invalid_proposal', 'field': key, 'reason': 'expected_bounded_string'}
     for key in ('assumptions', 'unmet_requirements'):
         if type(proposal[key]) is not list or len(proposal[key]) > 20 or any(type(x) is not str or len(x) > 4096 for x in proposal[key]):
-            return {'outcome': 'invalid_proposal'}
-    try:
-        _check_example(proposal['example_input'])
-        _check_example(proposal['expected_output'])
-        names = proposal['expected_output']
-        if not names or len(names) > 100 or any(not k or len(k) > 128 for k in names):
-            raise ValueError('output_names')
-    except (ValueError, TypeError, RecursionError, OverflowError):
-        return {'outcome': 'invalid_proposal'}
+            return {'outcome': 'invalid_proposal', 'field': key, 'reason': 'expected_bounded_string_array'}
+    for key in ('example_input', 'expected_output'):
+        try:
+            _check_example(proposal[key])
+        except (ValueError, TypeError, RecursionError, OverflowError) as exc:
+            reason = str(exc) if type(exc) is ValueError and str(exc) in {
+                'example_limit', 'example_key', 'example_type', 'example_object', 'number_limit'
+            } else 'invalid_example_value'
+            return {'outcome': 'invalid_proposal', 'field': key, 'reason': reason}
+    names = proposal['expected_output']
+    if not names or len(names) > 100 or any(not k or len(k) > 128 for k in names):
+        return {'outcome': 'invalid_proposal', 'field': 'expected_output', 'reason': 'output_names'}
     return validate_source(proposal['source'])

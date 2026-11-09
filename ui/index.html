@@ -37,7 +37,12 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 <div class="grid"><div><label for="search">Find a model</label><input id="search" type="search" placeholder="Search model name or ID"></div><div><label for="model">Model</label><select id="model"><option value="">Load models to select one</option></select></div></div>
 </section>
 <section>
-<label for="preset">Instruction preset</label><select id="preset"><option value="">Custom instruction</option></select>
+<div class="grid">
+<div><label for="preset">Instruction preset</label><select id="preset"><option value="">Custom instruction</option></select></div>
+<div><label for="difficulty">Prompt difficulty</label><select id="difficulty" disabled>
+<option value="easy">Easy · more guidance</option><option value="medium" selected>Medium</option><option value="hard">Hard · minimal guidance</option>
+</select></div>
+</div>
 <label for="instruction" style="margin-top:14px">Instructions</label>
 <textarea id="instruction" placeholder="Describe the transformation. Include any examples you want preserved."></textarea>
 <div class="grid settings">
@@ -108,6 +113,7 @@ function chosenFailures(){return [...$('cases').querySelectorAll('input:checked'
 function controls(){
  $('workspace').disabled=busy;
  const hasModel=!!$('model').value;
+ $('difficulty').disabled=$('preset').value==='';
  $('generate').disabled=!hasModel||!$('instruction').value.trim();
  $('run').disabled=!canRun();
  $('correct').disabled=!canRun()||!hasModel||!$('correctionGuide').value.trim();
@@ -274,10 +280,12 @@ $('load').onclick=()=>action('Load models',async()=>{
 });
 $('search').oninput=filterModels;$('model').onchange=controls;$('instruction').oninput=controls;
 $('correctionGuide').oninput=controls;
-$('preset').onchange=()=>{
- $('instruction').value=$('preset').value===''?'':presets[Number($('preset').value)][1];
+function applyPreset(){
+ const index=$('preset').value;
+ $('instruction').value=index===''?'':presets[Number(index)][1][$('difficulty').value];
  controls();
-};
+}
+$('preset').onchange=$('difficulty').onchange=applyPreset;
 $('generate').onclick=()=>action('Generate',()=>modelUpdate('/api/generate',
  {instruction:$('instruction').value,example_count:number('count')}));
 $('run').onclick=()=>action('Run examples',()=>update('/api/run'));

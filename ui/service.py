@@ -8,7 +8,7 @@ from scriptspell.workflow import display_json, parse_json
 UIError = AuthoringError
 
 
-def dispatch(endpoint, cancel, models):
+def dispatch(endpoint, cancel, models, *, timeout=120):
     def complete(materials, settings):
         model = settings.pop('model')
         modelspell.check_settings(endpoint.kind, **settings)
@@ -20,7 +20,7 @@ def dispatch(endpoint, cancel, models):
             [modelspell.Message('system', materials['system'] + '\nJSON response schema: ' +
                                 json.dumps(materials['response_schema'])),
              modelspell.Message('user', materials['user'])],
-            timeout=120, cancel=cancel, **settings)
+            timeout=timeout, cancel=cancel, **settings)
     return complete
 
 

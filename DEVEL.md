@@ -37,6 +37,11 @@ The trim command allows one paid request. Set `--model` to the desired OpenRoute
 Inspect `reports/authoring_openrouter.json`: exit 0 is PASS, 1 FAIL, 2 BLOCKED.
 A blocked or unrun check is never a pass. Live model calls are manual and excluded from CI.
 
+The separate preset batch runner (`python -m scripts.check_authoring_presets --dry-run`)
+uses the playground catalog, modelSpell adapter and public generation/test functions.
+Keep it opt-in and use mocked completions in automated tests. The six-task runner above
+uses fixed visible and held-out answers, while preset batches test generated cases.
+
 ### Developer playground
 
 ```bash

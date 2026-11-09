@@ -140,7 +140,7 @@ untested revision from a prior snapshot. Model proposals are bound to the active
 
 In a checkout with the development extra installed, run `python -m ui`. Use an OpenRouter
 key from the environment or enter it in the page, load models and choose a preset or
-enter an instruction. Generate, review the examples, then run them. Use **Edit / correct**
+enter an instruction. Presets offer easy, medium and hard guidance for the same task. Generate, review the examples, then run them. Use **Edit / correct**
 to change a saved example or request a proposed expectation, or select failing cases
 and use **Improve Python** to propose new code. **Save Python** exports the selected revision.
 
@@ -149,6 +149,25 @@ drafts, attempts and test results. Exports use
 `runs/<session-id>/<revision-id>/<export-id>/script.py` with adjacent `metadata.json`
 recording revision and test status. OpenRouter credentials stay in memory. Use synthetic
 data because model requests send task material to OpenRouter and the journal retains it.
+
+To test the same presets in a batch, run from the checkout with the development extra
+installed and `OPENROUTER_API_KEY` set in your environment.
+
+```sh
+python -m scripts.check_authoring_presets --list
+python -m scripts.check_authoring_presets --difficulty all --dry-run
+python -m scripts.check_authoring_presets --task 02 --model qwen/qwen3-coder-next --examples 3
+python -m scripts.check_authoring_presets
+```
+
+The default batch makes up to 20 requests, one per medium preset, and generates three
+examples per request. `--difficulty all` runs up to 60 variants. Set temperature,
+reasoning, token cap, timeout and report path with `--temperature`, `--reasoning`,
+`--max-tokens`, `--timeout`, and `--report`. The default report is
+`reports/authoring_presets.json`. Exit codes are 0 for PASS, 1 for FAIL, and 2 for BLOCKED.
+A blocked provider or runtime stops the batch. A pass measures whether the generated
+Python matches the model-generated expectations. The report includes both values for
+review.
 
 ## Public API
 

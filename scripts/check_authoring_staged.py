@@ -2,79 +2,20 @@
 import argparse
 import json
 import os
-import re
 from pathlib import Path
 from time import monotonic
 
 import modelspell
 
-from scriptspell import AuthoringError, profile, run_examples, validate_model_settings, validate_source
-from scriptspell.authoring import LANGUAGE_RULES, SCHEMA, _check_example
+from scriptspell import AuthoringError, run_examples, validate_model_settings
+from scriptspell.staged import StageError, StagedAuthoring, _interface, _MAX_REPLY
 from scriptspell.workflow import display_json, parse_json
 from scripts.check_authoring_presets import BLOCKED_OUTCOMES, DEFAULT_MODEL
 from ui.presets import DEFAULT_DIFFICULTY, DIFFICULTIES, PRESETS
 from ui.service import dispatch
 
-_TYPES = {'array': list, 'boolean': bool, 'integer': int, 'null': type(None),
-          'object': dict, 'string': str}
-_FORMAT = ('Return one raw JSON object. Quote all keys and use null, true and false for JSON data. '
-           'Do not put Python expressions in the data. Wrap lists under named object fields.')
-_MAX_REPLY = 6291456
-
-
-class StageError(AuthoringError):
-    def __init__(self, code, **details):
-        super().__init__(code)
-        self.details = details
-
-
-def _unwrap(text, language):
-    if type(text) is not str or len(text) > _MAX_REPLY:
-        raise StageError('response_limit')
-    match = re.fullmatch(rf'```(?:{language})?[ \t]*\r?\n(.*)\r?\n```', text.strip(), re.DOTALL | re.IGNORECASE)
-    return match[1] if match else text
-
-
-def _fields(value, names, path):
-    if type(value) is not dict or value.keys() != set(names):
-        actual = set(value) if type(value) is dict else set()
-        raise StageError('invalid_fields', field=path, actual_type=type(value).__name__,
-                             missing=sorted(set(names) - actual), unexpected=sorted(actual - set(names)))
-
-
-def _interface(value):
-    _fields(value, ('inputs', 'outputs'), 'interface')
-    for side, fields in value.items():
-        if type(fields) is not dict or len(fields) > 100 or (side == 'outputs' and not fields):
-            raise StageError('invalid_interface', field=f'interface.{side}')
-        for name, kind in fields.items():
-            if not name or len(name) > 128 or type(kind) is not str or kind not in _TYPES:
-                raise StageError('invalid_interface', field=f'interface.{side}.{name}')
-    return value
-
-
 def load_interface(path):
     return _interface(parse_json(path.read_text(encoding='utf-8')))
-
-
-def _example(value, fields, path):
-    _fields(value, fields, path)
-    try:
-        _check_example(value)
-    except (ValueError, TypeError, RecursionError, OverflowError) as exc:
-        raise StageError('invalid_example', field=path) from exc
-    for key, kind in fields.items():
-        if type(value[key]) is not _TYPES[kind]:
-            raise StageError('invalid_example_type', field=f'{path}.{key}',
-                                 expected=kind, actual=type(value[key]).__name__)
-
-
-def _object(properties):
-    return dict(type='object', required=list(properties), properties=properties, additionalProperties=False)
-
-
-def _schema(properties):
-    return dict(_object(properties), **{'$defs': SCHEMA['$defs']})
 
 
 def evaluate(send, settings, instruction, example_count, *, interface=None):
@@ -85,10 +26,8 @@ def evaluate(send, settings, instruction, example_count, *, interface=None):
     def capture(text):
         return text.replace(key, '[REDACTED]') if key else text
 
-    def request(stage, system, context, validate, *, schema=None):
-        materials = dict(system=system, user=json.dumps(context, ensure_ascii=True, allow_nan=False))
-        if schema is not None:
-            materials['response_schema'] = schema
+    def request(stage):
+        materials = flow.materials(stage)
         attempt = dict(stage=stage, request=materials)
         attempts.append(attempt)
         started = monotonic()
@@ -102,9 +41,8 @@ def evaluate(send, settings, instruction, example_count, *, interface=None):
                                        response_id=getattr(reply, 'response_id', None))
             if reply.truncated or reply.finish_reason != 'stop':
                 raise StageError('incomplete_model_response')
-            value = validate(reply.text)
+            flow.accept(stage, reply.text)
             attempt['validation'] = {'outcome': 'ok'}
-            return value
         except AuthoringError as exc:
             details = getattr(exc, 'details', {})
             # The shared JSON parser preserves the underlying decoder exception.
@@ -122,75 +60,16 @@ def evaluate(send, settings, instruction, example_count, *, interface=None):
             attempt['elapsed_seconds'] = monotonic() - started
 
     try:
-        if interface is not None:
-            _interface(interface)
-        input_properties = {'examples': dict(type='array', minItems=example_count, maxItems=example_count,
-                                              items=SCHEMA['properties']['example_input'])}
-        if interface is None:
-            field_types = dict(type='object', additionalProperties={'enum': list(_TYPES)})
-            input_properties['interface'] = _object({'inputs': field_types, 'outputs': field_types})
-
-        def check_inputs(text):
-            value = parse_json(_unwrap(text, 'json'), max_chars=_MAX_REPLY)
-            _fields(value, input_properties, '$')
-            contract = _interface(value['interface']) if interface is None else interface
-            examples = value['examples']
-            if type(examples) is not list or len(examples) != example_count:
-                raise StageError('wrong_example_count', field='examples', expected_count=example_count,
-                                     actual_count=len(examples) if type(examples) is list else None)
-            for index, example in enumerate(examples):
-                _example(example, contract['inputs'], f'examples[{index}]')
-            return contract, {str(index): example for index, example in enumerate(examples, 1)}
-
-        contract, inputs = request(
-            'inputs', 'Generate distinct example inputs for the task. ' + _FORMAT +
-            ' Return exactly the requested number of inputs in examples. If no interface is supplied, '
-            'declare input and output field names and their JSON types in interface. '
-            'Use the same fields and types for every case. Generate input data only.',
-            dict(task=instruction, example_count=example_count, interface=interface), check_inputs,
-            schema=_schema(input_properties))
-        result.update(interface=contract, inputs=inputs)
-
-        def check_outputs(text):
-            value = parse_json(_unwrap(text, 'json'), max_chars=_MAX_REPLY)
-            _fields(value, ('outputs',), '$')
-            outputs = value['outputs']
-            _fields(outputs, inputs, 'outputs')
-            for case_id, output in outputs.items():
-                _example(output, contract['outputs'], f'outputs.{case_id}')
-            return outputs
-
-        outputs = request(
-            'expectations', 'Work out the expected result for each input independently. ' + _FORMAT +
-            ' Return outputs keyed by the supplied case IDs. Use exactly the output fields and types '
-            'in the interface. Do not generate code or alter the inputs.',
-            dict(task=instruction, interface=contract, inputs=inputs), check_outputs,
-            schema=_schema({'outputs': _object(dict.fromkeys(inputs, SCHEMA['properties']['expected_output']))}))
-        result['expectations'] = outputs
-
-        capabilities = profile()
-        language = {name: capabilities[name] for name in
-                    ('profile', 'builtins', 'imports', 'data_attributes', 'syntax', 'output_types', 'caveats')}
-
-        def check_source(text):
-            source = _unwrap(text, 'python')
-            checked = validate_source(source)
-            if checked['outcome'] != 'ok':
-                raise StageError(checked['outcome'], issues=checked.get('issues', []))
-            return source
-
-        source = request(
-            'python', 'Return only Python defining transform(inputs). The function takes an input '
-            'dictionary and returns a dictionary with the specified output fields. '
-            'Implement the general task. Do not hard-code the example. Use lists for output sequences. '
-            + LANGUAGE_RULES + 'Language profile: ' + json.dumps(language),
-            dict(task=instruction, interface=contract, example_input=inputs['1'],
-                 expected_output=outputs['1']), check_source)
-        cases = [dict(id=case_id, example_input=value, expected_output=outputs[case_id])
-                 for case_id, value in inputs.items()]
-        execution = evaluate_examples(dict(source=source, examples=cases, unmet_requirements=[]))
-        for case, report in zip(cases, execution['examples']):
-            report.update(case_id=case['id'], visible=case['id'] == '1')
+        flow = StagedAuthoring(instruction, example_count, interface)
+        request('inputs')
+        result.update(interface=flow.contract, inputs=flow.inputs)
+        request('expectations')
+        result['expectations'] = flow.outputs
+        request('python')
+        draft = flow.draft()
+        execution = evaluate_examples(draft)
+        for index, report in enumerate(execution['examples'], 1):
+            report.update(case_id=str(index), visible=index == 1)
         execution['visible_case_status'] = execution['examples'][0]['status']
         held_back = execution['examples'][1:]
         execution['held_back'] = dict(total=len(held_back),

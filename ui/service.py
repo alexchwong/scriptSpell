@@ -8,6 +8,14 @@ from scriptspell.workflow import display_json, parse_json
 UIError = AuthoringError
 
 
+def prompt_preview(materials):
+    system = materials['system']
+    schema = materials.get('response_schema')
+    schema_text = None if schema is None else 'JSON response schema: ' + json.dumps(schema)
+    return dict(system=system, user=materials['user'], schema=schema_text,
+                full_system=system if schema_text is None else system + '\n' + schema_text)
+
+
 def dispatch(endpoint, cancel, models, *, timeout=120):
     def complete(materials, settings):
         model = settings.pop('model')
@@ -15,13 +23,11 @@ def dispatch(endpoint, cancel, models, *, timeout=120):
         info = models.get(model)
         if settings['reasoning'] not in (None, 'off') and getattr(info, 'supports_reasoning', None) is False:
             raise modelspell.UnsupportedSetting('This model reports no reasoning support')
-        system = materials['system']
-        if 'response_schema' in materials:
-            system += '\nJSON response schema: ' + json.dumps(materials['response_schema'])
+        prompt = prompt_preview(materials)
         return modelspell.complete(
             endpoint, model,
-            [modelspell.Message('system', system),
-             modelspell.Message('user', materials['user'])],
+            [modelspell.Message('system', prompt['full_system']),
+             modelspell.Message('user', prompt['user'])],
             timeout=timeout, cancel=cancel, **settings)
     return complete
 
@@ -38,7 +44,7 @@ def _reports(reports):
 
 def _draft(draft, reports):
     return dict(draft, examples=[
-        dict(id=case['id'], input_json=display_json(case['example_input']),
+        dict(id=case['id'], visible=case.get('visible'), input_json=display_json(case['example_input']),
              expected_json=display_json(case['expected_output']), result=reports.get(case['id']))
         for case in draft['examples']])
 

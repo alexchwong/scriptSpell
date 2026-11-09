@@ -82,7 +82,11 @@ def test_http_generation_edits_correction_and_preserves_draft_on_failure(server,
     assert status == 200 and len(calls) == 1
     materials = prepare_authoring('Echo')
     assert calls[0][0][0].content.startswith(materials['system'])
-    assert calls[0][0][1].content == materials['user']
+    status, preview = request(server, '/api/authoring-preview', body)
+    assert status == 200
+    assert calls[0][0][0].content == preview['full_system']
+    assert calls[0][0][1].content == preview['user']
+    assert preview['user'].startswith('Task\n\nEcho')
     assert {k: calls[0][1][k] for k in ('temperature', 'max_tokens', 'reasoning')} == {
         k: body[k] for k in ('temperature', 'max_tokens', 'reasoning')}
     active = data['active_id']
@@ -133,3 +137,63 @@ def test_exact_comparison():
     assert not same_value({'x': True}, {'x': 1})
     assert not same_value({'x': [1, 2]}, {'x': [2, 1]})
     assert same_value({'a': 1, 'b': None}, {'b': None, 'a': 1})
+
+
+def test_staged_previews_paste_execution_and_upstream_replacement(server, monkeypatch):
+    import modelspell
+    calls = []
+    interface = {'inputs': {'n': 'integer'}, 'outputs': {'out': 'integer'}}
+    body = dict(instruction='Double n', example_count=2, revision_id=None, stage='inputs',
+                model='test/model', interface_text=json.dumps(interface))
+    status, preview = request(server, '/api/authoring-preview', body)
+    assert status == 200 and preview['user'].startswith('Task\n\nDouble n')
+
+    def complete(endpoint, model, messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(text='{"examples":[{"n":1},{"n":9007199254740993}]}',
+                               finish_reason='stop', truncated=False)
+
+    monkeypatch.setattr(modelspell, 'complete', complete)
+    status, inputs = request(server, '/api/stage', body)
+    assert status == 200 and inputs['has_inputs']
+    assert [message.content for message in calls[0]] == [preview['full_system'], preview['user']]
+    outputs_body = dict(body, stage='expectations', stage_token=inputs['stage_token'])
+    status, outputs = request(server, '/api/stage',
+                              dict(outputs_body, reply='{"outputs":{"1":{"out":2},"2":{"out":18014398509481986}}}'))
+    assert status == 200 and outputs['has_outputs']
+    python_body = dict(body, stage='python', stage_token=outputs['stage_token'])
+    assert request(server, '/api/authoring-preview', dict(python_body, stage_token=inputs['stage_token']))[1]['error'] == 'stale_stage'
+    status, preview = request(server, '/api/authoring-preview', python_body)
+    assert status == 200 and preview['schema'] is None
+    assert '9007199254740993' not in preview['user']
+    status, completed = request(server, '/api/stage', dict(
+        python_body, reply='def transform(inputs):\n    return {"out": 2 * inputs["n"]}'))
+    assert status == 200 and completed['completed_revision'] == completed['active_id']
+    status, tested = request(server, '/api/run', {'revision_id': completed['active_id']})
+    assert status == 200
+    assert [case['visible'] for case in tested['revision']['draft']['examples']] == [True, False]
+    assert all(case['result']['status'] == 'pass' for case in tested['revision']['draft']['examples'])
+
+    status, replaced = request(server, '/api/stage', dict(
+        body, stage_token=completed['stage_token'], revision_id=completed['active_id'],
+        reply='{"examples":[{"n":3},{"n":4}]}'))
+    assert status == 200 and not replaced['has_outputs'] and replaced['completed_revision'] is None
+    assert request(server, '/api/authoring-preview', dict(
+        python_body, stage_token=replaced['stage_token']))[1]['error'] == 'stage_not_ready'
+    assert len(calls) == 1
+
+
+def test_one_shot_paste_uses_proposal_validation_without_model_call(server, monkeypatch):
+    import modelspell
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('pasting a reply must not call the model')
+
+    monkeypatch.setattr(modelspell, 'complete', unexpected)
+    body = dict(instruction='Echo', example_count=1, revision_id=None)
+    assert request(server, '/api/generate', dict(body, reply='{}'))[1]['error'] == 'invalid_proposal'
+    reply = dict(source='def transform(inputs):\n    return {"out": inputs["n"]}',
+                 summary='', assumptions=[], unmet_requirements=[],
+                 example_input={'n': 7}, expected_output={'out': 7})
+    status, view = request(server, '/api/generate', dict(body, reply=json.dumps(reply)))
+    assert status == 200 and view['revision']['action'] == 'paste'

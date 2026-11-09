@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 from scripts.check_authoring_staged import evaluate, main
+from scriptspell.prompt_files import task_text
 
 
 SETTINGS = {'model': 'test/model'}
@@ -25,9 +26,10 @@ def test_three_stages_execute_and_hold_back_cases():
     assert report['status'] == 'PASS'
     assert report['held_back'] == {'total': 2, 'passed': 2}
     assert [case['visible'] for case in report['examples']] == [True, False, False]
-    assert json.loads(calls[1]['user'])['inputs'] == {'1': {'n': 1}, '2': {'n': 2}, '3': {'n': 3}}
-    assert json.loads(calls[2]['user']) == dict(task='Double n', interface=INTERFACE,
-                                               example_input={'n': 1}, expected_output={'out': 2})
+    assert calls[1]['user'] == task_text('Double n', interface=INTERFACE,
+                                         inputs={'1': {'n': 1}, '2': {'n': 2}, '3': {'n': 3}})
+    assert calls[2]['user'] == task_text('Double n', interface=INTERFACE,
+                                         example_input={'n': 1}, expected_output={'out': 2})
     assert 'response_schema' not in calls[2]
     assert [attempt['stage'] for attempt in report['attempts']] == ['inputs', 'expectations', 'python']
 

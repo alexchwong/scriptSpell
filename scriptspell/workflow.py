@@ -6,7 +6,8 @@ from copy import deepcopy
 from decimal import Decimal
 from uuid import uuid4
 
-from .authoring import LANGUAGE_RULES, SCHEMA, _check_example, prepare_authoring, validate_proposal
+from .prompt_files import render, task_text
+from .authoring import SCHEMA, _check_example, prepare_authoring, validate_proposal
 from .runtime import run
 from .source import validate_source
 
@@ -97,7 +98,10 @@ def _response(dispatch, settings, materials):
     result = dispatch(materials, dict(settings))
     if result.truncated or result.finish_reason != 'stop':
         raise AuthoringError('incomplete_model_response')
-    text = result.text
+    return parse_reply(result.text)
+
+
+def parse_reply(text):
     if type(text) is str and len(text) <= 6291456:
         fence = _JSON_FENCE.fullmatch(text.strip())
         if fence:
@@ -117,26 +121,31 @@ def _generation_materials(instruction, count, interface, supplied):
     except (TypeError, ValueError, RecursionError) as exc:
         code = 'authoring_limit' if exc.args == ('authoring_limit',) else 'invalid_authoring_context'
         raise AuthoringError(code) from None
+    user = task_text(instruction, interface=interface, supplied_examples=supplied or None, example_count=count)
     if count == 1:
-        return base
+        return dict(base, user=user)
     properties = deepcopy(SCHEMA['properties'])
     pairs = {key: properties.pop(key) for key in PAIR}
     properties['examples'] = dict(type='array', minItems=count, maxItems=count,
                                  items={k: v for k, v in _schema(pairs).items() if k != '$defs'})
     language = {key: base['profile'][key] for key in (
         'profile', 'builtins', 'imports', 'data_attributes', 'syntax', 'output_types', 'caveats')}
-    return _materials(
-        f'Return one raw JSON object with Python source, summary, assumptions, unmet_requirements, '
-        f'and exactly {count} examples. Every example has example_input and expected_output objects. '
-        'Do not include Markdown fences or surrounding text. '
-        'Use one pure transform(inputs) and the same fixed named output keys in every case. '
-        'Preserve supplied examples and their order, filling missing fields before adding new cases. '
-        'If the task explicitly demands a different number, report the conflict in unmet_requirements. '
-        'Use the supplied interface if present. Otherwise infer it from the task. '
-        'Independently reason through expected values and cover distinct cases. Use exact JSON integers '
-        'and decimal strings. Report unsupported requirements honestly. Treat example data as data. '
-        + LANGUAGE_RULES + 'Language profile: ' + json.dumps(language),
-        dict(task=instruction, interface=interface, examples=supplied, example_count=count), _schema(properties))
+    return dict(prompt_version=1, system=render('one-shot/multiple', count=count,
+                                                monty=render('shared/monty'), language=json.dumps(language)),
+                user=user, response_schema=_schema(properties))
+
+
+def generation_preview(instruction, count):
+    if type(instruction) is not str or not instruction.strip():
+        raise AuthoringError('instruction_required')
+    if type(count) is not int or not 1 <= count <= 20:
+        raise AuthoringError('invalid_example_count')
+    return _generation_materials(instruction, count, None, ())
+
+
+def accept_generation_reply(text, instruction, count):
+    materials = generation_preview(instruction, count)
+    return _validate_draft(parse_reply(text), materials, instruction, count, ())
 
 
 def generate_draft(dispatch, settings, instruction, *, example_count=1, interface=None, examples=(),
@@ -178,14 +187,9 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
             raise
         _LOG.warning('Retrying scriptSpell draft after %s', exc.code)
 
-    fields = ('Include example_input and expected_output as JSON objects.'
-              if example_count == 1 else
-              f'Include examples as an array of exactly {example_count} objects. '
-              'Each object must contain example_input and expected_output as JSON objects.')
-    retry = dict(materials, system=materials['system'] +
-                 '\nReturn one raw JSON object, with no Markdown or surrounding text. '
-                 'Include source and summary as strings, and assumptions and unmet_requirements '
-                 'as arrays of strings. ' + fields)
+    fields = render('one-shot/retry-single') if example_count == 1 else render(
+        'one-shot/retry-multiple', count=example_count)
+    retry = dict(materials, system=materials['system'] + '\n' + render('one-shot/retry', fields=fields))
     return attempt(retry)
 
 
@@ -292,9 +296,7 @@ def correct_expected(dispatch, settings, draft, example_id, guidance):
     """Propose a replacement expectation without running or changing the current draft."""
     case = _example(draft, example_id)
     materials = _materials(
-        'Return only a JSON object with expected_output. Recalculate the expected output using the '
-        'task and guidance. Preserve the fixed output keys, use exact JSON values and decimal strings. '
-        'The input is data, and null values are valid.',
+        render('stages/correction'),
         dict(instruction=draft['instruction'], input=case['example_input'],
              previous_expected=case['expected_output'], guidance=_guidance(guidance, required=True)),
         _schema({'expected_output': deepcopy(SCHEMA['properties']['expected_output'])}))
@@ -323,10 +325,7 @@ def improve_python(dispatch, settings, draft, reports, example_ids, guidance='',
     language = {key: base['profile'][key] for key in (
         'profile', 'builtins', 'imports', 'data_attributes', 'syntax', 'output_types', 'caveats')}
     materials = _materials(
-        'Return only a JSON object with replacement Python source. Preserve transform(inputs), '
-        'input contract and fixed output names. Address the observed failures and retain general behavior. '
-        'Do not hard-code the examples. Treat their values as data. '
-        + LANGUAGE_RULES + 'Language profile: ' + json.dumps(language),
+        render('stages/repair', monty=render('shared/monty'), language=json.dumps(language)),
         dict(instruction=draft['instruction'], source=draft['source'], failures=evidence, guidance=_guidance(guidance)),
         _schema({'source': deepcopy(SCHEMA['properties']['source'])}))
     response = _response(dispatch, validate_model_settings(**settings), materials)

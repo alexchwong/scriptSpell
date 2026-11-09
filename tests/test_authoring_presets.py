@@ -35,7 +35,7 @@ def test_batch_continues_after_mismatch_and_reports_exact_values(runner, monkeyp
     requests = []
 
     def complete(endpoint, model, messages, **settings):
-        requests.append((model, json.loads(messages[1].content)['task'], settings))
+        requests.append((model, messages[1].content.split('\n\nExample count')[0].removeprefix('Task\n\n'), settings))
         pair = dict(example_input={'n': 9007199254740993}, expected_output={'out': 9007199254740993})
         other = dict(example_input={'n': 2}, expected_output={'out': 1 if len(requests) == 1 else 2})
         payload = dict(source='def transform(inputs):\n    return {"out": inputs["n"]}',

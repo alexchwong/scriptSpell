@@ -1,5 +1,6 @@
 """Local, token-protected developer server. Browser adapter for the headless authoring session."""
 import argparse
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,9 @@ from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 import modelspell
-from scriptspell import AuthoringSession
+from scriptspell import AuthoringSession, validate_model_settings
+from scriptspell.staged import StagedAuthoring
+from scriptspell.workflow import accept_generation_reply, generation_preview
 from . import service
 from .presets import PRESETS
 
@@ -26,6 +29,8 @@ class UIServer(ThreadingHTTPServer):
         self.api_key = ''
         self.session = AuthoringSession(runs)
         self.models = {}
+        self.stage_token = None
+        self.staged = None
         self.model_cancel = modelspell.CancelHandle()
         self.run_cancel = threading.Event()
         self.closing = False
@@ -104,18 +109,20 @@ class Handler(BaseHTTPRequestHandler):
                 raise service.UIError('json_required')
             if self.headers.get('Transfer-Encoding'):
                 raise service.UIError('invalid_request')
+            path = urlsplit(self.path).path
+            limit = 8 * 1024 * 1024 if path in ('/api/generate', '/api/stage') else 524288
             length = int(self.headers.get('Content-Length', '0'))
-            if not 0 < length <= 524288:
+            if not 0 < length <= limit:
                 raise service.UIError('request_limit')
             raw = self.rfile.read(length)
             if len(raw) != length:
                 raise service.UIError('invalid_request')
-            body = service.parse_json(raw.decode('utf-8'), max_chars=524288)
+            body = service.parse_json(raw.decode('utf-8'), max_chars=limit)
             if type(body) is not dict:
                 raise service.UIError('invalid_request')
-            self.route(urlsplit(self.path).path, body)
+            self.route(path, body)
         except service.UIError as exc:
-            self.send(400, {'error': exc.code})
+            self.send(400, dict(error=exc.code, details=getattr(exc, 'details', {})))
         except modelspell.ModelSpellError as exc:
             # Class names give useful failure categories without echoing credentials or prompts.
             self.send(502, {'error': type(exc).__name__})
@@ -127,6 +134,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, {'error': 'invalid_request'})
         finally:
             self.server.operation.release()
+
+    def staged_flow(self, body):
+        server = self.server
+        stage = body.get('stage')
+        token = body.get('stage_token')
+        if token is None and stage == 'inputs':
+            interface = body.get('interface_text', '')
+            if type(interface) is not str:
+                raise service.UIError('invalid_interface')
+            return StagedAuthoring(body.get('instruction'), body.get('example_count', 1),
+                                   service.parse_json(interface) if interface.strip() else None)
+        if server.staged is None or token != server.stage_token:
+            raise service.UIError('stale_stage')
+        flow = server.staged
+        if flow.instruction != body.get('instruction') or flow.count != body.get('example_count'):
+            raise service.UIError('stale_stage')
+        return flow
 
     def route(self, path, body):
         s = self.server
@@ -149,6 +173,44 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, service.attempt_view(session, body.get('attempt_id')))
         if path == '/api/export':
             return self.send(200, session.export(revision_id))
+
+        if path == '/api/authoring-preview':
+            materials = (self.staged_flow(body).materials(body.get('stage')) if body.get('stage')
+                         else generation_preview(body.get('instruction'), body.get('example_count', 1)))
+            return self.send(200, service.prompt_preview(materials))
+        if path == '/api/stage':
+            if revision_id != session.snapshot()['active_id']:
+                raise service.UIError('stale_revision')
+            flow = deepcopy(self.staged_flow(body))
+            stage = body.get('stage')
+            materials = flow.materials(stage)
+            settings = None
+            if 'reply' in body:
+                reply = body['reply']
+            else:
+                settings = validate_model_settings(**service.settings(body))
+                s.model_cancel = modelspell.CancelHandle()
+                if s.closing:
+                    s.model_cancel.cancel()
+                response = service.dispatch(s.endpoint(), s.model_cancel, s.models)(materials, dict(settings))
+                if response.truncated or response.finish_reason != 'stop':
+                    raise service.UIError('incomplete_model_response')
+                reply = response.text
+            flow.accept(stage, reply)
+            completed_revision = None
+            if stage == 'python':
+                completed_revision = session.record_authored(revision_id, flow.draft(), staged=True, settings=settings)
+            s.staged = flow
+            s.stage_token = secrets.token_urlsafe(16)
+            return self.send(200, dict(service.view(session), stage_token=s.stage_token,
+                                       completed_revision=completed_revision,
+                                       has_inputs=flow.inputs is not None, has_outputs=flow.outputs is not None,
+                                       accepted_text=service.display_json(dict(interface=flow.contract, inputs=flow.inputs,
+                                                                         expected_outputs=flow.outputs))))
+        if path == '/api/generate' and 'reply' in body:
+            draft = accept_generation_reply(body['reply'], body.get('instruction'), body.get('example_count', 1))
+            session.record_authored(revision_id, draft)
+            return self.send(200, service.view(session))
 
         if path in ('/api/generate', '/api/correct', '/api/improve'):
             s.model_cancel = modelspell.CancelHandle()

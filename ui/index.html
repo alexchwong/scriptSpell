@@ -51,7 +51,29 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 <div><label for="reasoning">Reasoning level</label><select id="reasoning"><option value="">Provider default</option><option>off</option><option>low</option><option>medium</option><option>high</option></select></div>
 <div><label for="maxTokens">Max output tokens</label><input id="maxTokens" type="number" min="1" step="1" placeholder="Provider default"></div>
 </div>
-<div class="actions"><button id="generate" class="primary">Generate</button><small>Generation can make a second OpenRouter request if the first reply has a format error. Settings are requested values.</small></div>
+<div class="grid">
+<div><label for="mode">Authoring mode</label><select id="mode"><option value="one-shot">One-shot</option><option value="staged">Staged</option></select></div>
+<div id="stageInterface" hidden><label for="interface">Interface JSON (optional)</label><textarea id="interface" placeholder='{"inputs":{"records":"array"},"outputs":{"result":"array"}}'></textarea></div>
+</div>
+<div id="stageControls" hidden class="actions">
+<button data-stage="inputs">1. Inputs</button>
+<button data-stage="expectations">2. Expected outputs</button>
+<button data-stage="python">3. Python</button>
+</div>
+<details id="accepted" hidden><summary>Accepted stage data</summary><pre id="acceptedText"></pre></details>
+<div class="actions"><button id="preview">Preview prompt</button><button id="generate" class="primary">Generate</button><small id="requestNote"></small></div>
+<div id="promptPreview" hidden>
+<div class="grid">
+<div><div class="section-title"><h2>System prompt</h2><button id="copySystem">Copy full system</button></div><pre id="systemPrompt" tabindex="0"></pre></div>
+<div><div class="section-title"><h2>User prompt</h2><button id="copyUser">Copy user</button></div><pre id="userPrompt" tabindex="0"></pre></div>
+</div>
+<details id="responseSchema" hidden><summary>Response schema · included in full system copy</summary><pre id="schemaText"></pre></details>
+</div>
+<details><summary>Paste a model reply</summary>
+<label for="pastedReply">Reply for the selected stage or one-shot draft</label>
+<textarea id="pastedReply" spellcheck="false"></textarea>
+<button id="acceptReply">Validate and accept reply</button>
+</details>
 <p class="note muted">Use synthetic data. Model actions send instructions and relevant examples or code to OpenRouter.</p>
 </section>
 <div id="status" role="status" aria-live="polite"></div>
@@ -97,6 +119,25 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 const $=id=>document.getElementById(id);
 const token=new URLSearchParams(location.search).get('t')||'';
 let busy=false, models=[], presets=[], snapshot={}, selectedAttempt=null, editing=null;
+let stage='inputs', stageToken=null, hasInputs=false, hasOutputs=false, stagedRevision=null, prompt=null;
+const stageLabels={inputs:'inputs',expectations:'expected outputs',python:'Python'};
+const staged=()=>$('mode').value==='staged';
+const stageReady=name=>name==='inputs'||(name==='expectations'?hasInputs:hasOutputs);
+const draftShown=()=>!!snapshot.revision&&(!staged()||stagedRevision===snapshot.revision.id||!isActive());
+function clearPrompt(){
+ prompt=null;$('promptPreview').hidden=true;$('pastedReply').value='';
+}
+function resetStages(){
+ stage='inputs';stageToken=null;hasInputs=hasOutputs=false;stagedRevision=null;
+ $('accepted').hidden=true;$('acceptedText').textContent='';
+ $('editor').hidden=$('review').hidden=true;
+ clearPrompt();controls();
+}
+function authoringBody(){
+ const body={instruction:$('instruction').value,example_count:number('count')};
+ if(staged())Object.assign(body,{stage,stage_token:stageToken,interface_text:$('interface').value});
+ return body;
+}
 
 function message(text,error=false){
  $('status').textContent=text;
@@ -108,13 +149,25 @@ function option(value,text){
  return element;
 }
 function isActive(){return !!snapshot.revision && snapshot.revision.id===snapshot.active_id;}
-function canRun(){return isActive() && !snapshot.revision.draft.unmet_requirements.length;}
+function canRun(){return draftShown() && isActive() && !snapshot.revision.draft.unmet_requirements.length;}
 function chosenFailures(){return [...$('cases').querySelectorAll('input:checked')].map(input=>input.value);}
 function controls(){
  $('workspace').disabled=busy;
  const hasModel=!!$('model').value;
  $('difficulty').disabled=$('preset').value==='';
- $('generate').disabled=!hasModel||!$('instruction').value.trim();
+ const ready=$('instruction').value.trim()&&(!staged()||stageReady(stage));
+ $('stageControls').hidden=$('stageInterface').hidden=!staged();
+ $('accepted').hidden=!staged()||!hasInputs;
+ for(const button of $('stageControls').querySelectorAll('button')){
+  button.disabled=!stageReady(button.dataset.stage);
+  button.setAttribute('aria-pressed',String(button.dataset.stage===stage));
+ }
+ $('generate').textContent=staged()?'Generate '+stageLabels[stage]:'Generate';
+ $('requestNote').textContent=staged()?'One request for the selected stage.':'Generation can make a second request after a format error.';
+ $('generate').disabled=!hasModel||!ready;
+ $('preview').disabled=!ready;
+ $('acceptReply').disabled=!ready||!$('pastedReply').value.trim();
+ $('draft').hidden=$('suite').hidden=!draftShown();
  $('run').disabled=!canRun();
  $('correct').disabled=!canRun()||!hasModel||!$('correctionGuide').value.trim();
  $('improve').disabled=!canRun()||!hasModel||!chosenFailures().length;
@@ -130,7 +183,10 @@ async function api(path,body){
  }
  const response=await fetch(path,options);
  const value=await response.json();
- if(!response.ok)throw Error(value.error||'request_failed');
+ if(!response.ok){
+  const details=value.details&&Object.keys(value.details).length?' · '+JSON.stringify(value.details):'';
+  throw Error((value.error||'request_failed')+details);
+ }
  return value;
 }
 async function action(label,fn){
@@ -184,7 +240,7 @@ function resultText(result){
 function showCase(container,example,index,{editable=false,regression=false}={}){
  const card=node('div','','case');
  const header=node('div','','section-title');
- const title=node('h3','Example '+(index+1)+' · '+resultText(example.result)+(regression?' · Regression':''),
+ const title=node('h3','Example '+(index+1)+(example.visible===true?' · Visible to coder':example.visible===false?' · Held back':'')+' · '+resultText(example.result)+(regression?' · Regression':''),
                   example.result?.status);
  header.append(title);
  if(editable){
@@ -260,6 +316,8 @@ function review(attempt){
 }
 async function update(path,body={}){
  const response=await api(path,{revision_id:snapshot.active_id,...body});
+ if(staged()&&stagedRevision===snapshot.active_id&&['/api/edit','/api/decide'].includes(path))
+  stagedRevision=response.active_id;
  render(response);
  if(response.attempt)review(response.attempt);
 }
@@ -278,16 +336,50 @@ $('load').onclick=()=>action('Load models',async()=>{
  await saveKey();models=(await api('/api/models',{})).models;filterModels();
  return models.length+' models loaded.';
 });
-$('search').oninput=filterModels;$('model').onchange=controls;$('instruction').oninput=controls;
+$('search').oninput=filterModels;$('model').onchange=controls;$('instruction').oninput=resetStages;$('count').oninput=resetStages;$('interface').oninput=resetStages;
 $('correctionGuide').oninput=controls;
 function applyPreset(){
  const index=$('preset').value;
  $('instruction').value=index===''?'':presets[Number(index)][1][$('difficulty').value];
- controls();
+ resetStages();
 }
 $('preset').onchange=$('difficulty').onchange=applyPreset;
-$('generate').onclick=()=>action('Generate',()=>modelUpdate('/api/generate',
- {instruction:$('instruction').value,example_count:number('count')}));
+$('mode').onchange=()=>{clearPrompt();controls();};
+$('pastedReply').oninput=controls;
+for(const button of $('stageControls').querySelectorAll('button')){
+ button.onclick=()=>{
+  stage=button.dataset.stage;clearPrompt();controls();
+ };
+}
+$('preview').onclick=()=>action('Preview prompt',async()=>{
+ prompt=await api('/api/authoring-preview',authoringBody());
+ $('systemPrompt').textContent=prompt.system;
+ $('userPrompt').textContent=prompt.user;
+ $('responseSchema').hidden=!prompt.schema;
+ $('schemaText').textContent=prompt.schema??'';
+ $('promptPreview').hidden=false;
+});
+$('copySystem').onclick=()=>action('Copy system prompt',()=>navigator.clipboard.writeText(prompt.full_system));
+$('copyUser').onclick=()=>action('Copy user prompt',()=>navigator.clipboard.writeText(prompt.user));
+async function submitAuthoring(paste){
+ const body=authoringBody();
+ if(paste)body.reply=$('pastedReply').value;
+ if(!staged()){
+  if(paste)await update('/api/generate',body);
+  else await modelUpdate('/api/generate',body);
+  clearPrompt();return;
+ }
+ if(!paste)await saveKey();
+ const response=await api('/api/stage',{revision_id:snapshot.active_id,...(paste?{}:settings()),...body});
+ stageToken=response.stage_token;hasInputs=response.has_inputs;hasOutputs=response.has_outputs;
+ stagedRevision=response.completed_revision;
+ $('accepted').hidden=false;$('acceptedText').textContent=response.accepted_text;
+ if(stage==='inputs')stage='expectations';
+ else if(stage==='expectations')stage='python';
+ clearPrompt();render(response);
+}
+$('generate').onclick=()=>action('Generate',()=>submitAuthoring(false));
+$('acceptReply').onclick=()=>action('Accept reply',()=>submitAuthoring(true));
 $('run').onclick=()=>action('Run examples',()=>update('/api/run'));
 $('saveEdit').onclick=()=>action('Save example edit',()=>update('/api/edit',
  {example_id:editing,input_json:$('editInput').value,expected_json:$('editExpected').value}));

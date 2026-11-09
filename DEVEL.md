@@ -93,6 +93,33 @@ Serialize edits, persist journal changes atomically, and guard every accept agai
 origin revision. Do not overwrite prior exports. Closing the server cancels active
 model/runtime work and joins handlers without bypassing Monty cleanup ownership.
 
+### Prompt catalog and manual comparisons
+
+Edit the Markdown files under `scriptspell/prompts/`. The JSON index assigns
+template and preset IDs and lists the sections for each difficulty. Keep task
+guidance in the preset files and reusable instructions in the stage or shared
+templates. Template placeholders use `${name}`. The Monty profile is injected
+from the runtime. Package the catalog with the wheel.
+
+The playground offers One-shot and Staged authoring. Select a stage and preview
+its System and User messages before sending. Copy the full System message to
+include the response schema when one applies. Paste a model reply to validate it
+locally without making an API call. In Staged mode, replacing inputs discards
+the working expectations and Python. Replacing expectations discards the
+working Python. Completed drafts are journaled as revisions. In-progress stage
+data is held in the browser session on the local server.
+
+The render-only CLI uses the same message formatting:
+
+```sh
+python -m scripts.render_authoring_prompt --task 02 --stage inputs --examples 3 --role user
+python -m scripts.render_authoring_prompt --task 02 --stage expectations --inputs inputs.json --role system
+python -m scripts.render_authoring_prompt --task 02 --stage python --inputs inputs.json --expected-outputs expected.json
+```
+
+Match the preset, difficulty, example count, and optional interface across stages.
+Copy System and User messages separately when the target chat supports both roles.
+
 ## Workflow and testing
 
 Inspect actual changes and preserve uncommitted work. Keep corrections within the agreed

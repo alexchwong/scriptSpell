@@ -175,6 +175,16 @@ class AuthoringSession:
                 generate_draft(dispatch, settings, instruction, **options), None))
             return self._data['attempts'][attempt_id]['accepted_revision_id']
 
+    def record_authored(self, revision_id, draft, *, staged=False, settings=None):
+        """Store a draft already validated by an authoring workflow."""
+        with self._lock:
+            self._check_active(revision_id)
+            data = deepcopy(self._data)
+            active = self._record_revision(data, deepcopy(draft),
+                                           'staged' if staged else 'paste', settings=settings)
+            self._write(data)
+            return active
+
     def run(self, revision_id, *, cancel=None):
         with self._lock:
             self._check_active(revision_id)

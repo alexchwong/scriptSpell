@@ -15,10 +15,12 @@ def dispatch(endpoint, cancel, models, *, timeout=120):
         info = models.get(model)
         if settings['reasoning'] not in (None, 'off') and getattr(info, 'supports_reasoning', None) is False:
             raise modelspell.UnsupportedSetting('This model reports no reasoning support')
+        system = materials['system']
+        if 'response_schema' in materials:
+            system += '\nJSON response schema: ' + json.dumps(materials['response_schema'])
         return modelspell.complete(
             endpoint, model,
-            [modelspell.Message('system', materials['system'] + '\nJSON response schema: ' +
-                                json.dumps(materials['response_schema'])),
+            [modelspell.Message('system', system),
              modelspell.Message('user', materials['user'])],
             timeout=timeout, cancel=cancel, **settings)
     return complete

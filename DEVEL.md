@@ -42,6 +42,32 @@ uses the playground catalog, modelSpell adapter and public generation/test funct
 Keep it opt-in and use mocked completions in automated tests. The six-task runner above
 uses fixed visible and held-out answers, while preset batches test generated cases.
 
+### Experimental staged authoring benchmark
+
+With the development extra installed and `OPENROUTER_API_KEY` set, compare
+the existing preset runner with the staged runner using the same options.
+
+```sh
+python -m scripts.check_authoring_presets --task 01 --difficulty easy --examples 3
+python -m scripts.check_authoring_staged --task 01 --difficulty easy --examples 3
+```
+
+The staged runner requests inputs, expected outputs, and plain Python in three
+separate calls. It makes one request per stage and stops a preset at its first
+failed stage. Monty runs all cases locally. Only the first pair is shown to the
+coder. With one example there are zero held-back cases.
+
+The staged report defaults to `reports/authoring_staged.json` and includes
+request counts, elapsed times, raw replies, validation outcomes, and separate
+visible and held-back case results. The default 20-preset staged batch costs up to
+60 requests. Use `--dry-run` to preview the request budget.
+
+For a single preset and difficulty, `--interface FILE` supplies the JSON object
+of named input and output fields. Each field maps to a JSON type name, for
+example `{"inputs":{"labels":"array"},"outputs":{"result":"array"}}`.
+Without this option the input stage proposes the interface. Held-back
+expectations are model-generated, so mismatches still require review.
+
 ### Developer playground
 
 ```bash

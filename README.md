@@ -31,13 +31,8 @@ Applications should pin a published wheel URL and its SHA-256 from the
 The wheel is pure Python; the Monty dependency supplies platform-specific components.
 A wheel filename ending in `any` does not imply Windows execution support.
 
-For development from a checkout:
-
-```sh
-python -m pip install '.[dev]'
-python -m pytest -q -rs
-python examples/application_adapter.py
-```
+For development setup, offline pytest, live OpenRouter authoring and the optional
+browser playground, see [DEVEL.md](DEVEL.md). The playground stays outside the product wheel.
 
 ## Run a transformation
 
@@ -78,11 +73,18 @@ materials = prepare_authoring(
 # checked = validate_proposal(proposal)
 ```
 
-A proposal has exactly four fields: `source`, `summary`, `assumptions` and
-`unmet_requirements`. A static `ok` means the proposal passed shape and source policy
-checks; it does not prove it runs or meets the task. The application checks unmet
-requirements and assumptions, runs synthetic test cases through `run`, validates
-contracts and expected results, and decides whether to save the source.
+A proposal has exactly six fields: `source`, `summary`, `assumptions`,
+`unmet_requirements`, `example_input` and `expected_output`. Every response must include
+code and both example dictionaries together; code-only proposals are rejected. The shared
+production prompt preserves examples supplied in instructions or `examples` and generates
+missing parts. `interface` is optional: `prepare_authoring("Trim surrounding whitespace.")`
+infers names/types from the instructions. Supplied interfaces remain fixed.
+Examples use JSON objects, arrays, strings, booleans, null and integers; use strings for
+decimals and explicitly return strings for decimal results in JSON examples.
+
+A static `ok` means the proposal passed shape and source policy checks; it does not prove it runs or meets the task. The application checks unmet
+requirements and assumptions, runs the proposed example and independent synthetic test cases
+through `run`, validates contracts and expected results, and decides whether to save the source.
 
 For a repair, call `prepare_authoring` again with the same task/interface and approved
 `diagnostics`. The application owns the retry budget and the data sent to the model.
@@ -101,7 +103,7 @@ Import from `scriptspell`; underscore modules and codec details are private.
 | --- | --- |
 | `__version__` | Installed library version; independent of the language/profile identifier. |
 | `profile()` | Fresh capability dictionary: profile, codec, dependency versions, limits and vocabulary. |
-| `prepare_authoring(task, interface, examples=(), diagnostics=None)` | Versioned `system`/`user` prompts, profile and response schema; no dispatch or source execution. |
+| `prepare_authoring(task, interface=None, examples=(), diagnostics=None)` | Versioned prompts/schema requiring code and examples together; no dispatch or source execution. |
 | `validate_proposal(proposal)` | Check proposal shape and source policy; returns an outcome dictionary. |
 | `validate_source(source)` | Static source-policy check; no submitted code execution. |
 | `run(source, inputs, output_names, *, limits=None, cancel=None)` | Synchronous invocation; accepted `values` exist only on `ok`. |
@@ -151,6 +153,14 @@ Interpreter allocation limits are not total RSS limits. On POSIX the driver atte
 Passing static checks or example tests does not guarantee correctness. In particular,
 scriptSpell cannot decide whether de-identification is complete or whether data is safe
 to release to a cloud model. That decision belongs to the application and human review.
+
+## Authoring compatibility
+
+Version 0.2.0 changes the proposal shape (prompt version 4). Consumers of 0.1.x must accept
+and retain `example_input` and `expected_output`, and update model stand-ins accordingly.
+Use `list(proposal["expected_output"])` for inferred output names; when a host contract is
+supplied, verify those names against it. Model dispatch remains the caller's responsibility.
+The UI and headless applications use this same production contract.
 
 ## Development and releases
 

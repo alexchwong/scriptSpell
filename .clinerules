@@ -1,0 +1,19 @@
+# Cline — reviewing Claude's handover
+
+Project maintenance rules live in `DEVEL.md`. Read it before changing code and consult the
+relevant sections; do not maintain a second copy of those rules here.
+
+1. Read the handover, inspect the actual changes and check the working tree before editing.
+   Preserve existing uncommitted work. Treat completion and validation claims as claims to verify.
+2. Review for functional defects, regressions, missing requirements and unsafe behaviour against
+   the agreed specification. Make the smallest justified correction, following existing patterns;
+   avoid unrelated refactoring, stylistic rewrites and new features.
+3. Follow `DEVEL.md` for setup, architecture, testing and release requirements. Add tests only
+   for a functional reason, not merely to demonstrate review activity.
+4. Finish the agreed review and correction scope; do not infer permission to continue a larger
+   build. Raise scope changes, new dependencies and unrecorded specification departures with
+   the owner. Do not commit, push or publish unless instructed.
+5. Run the required checks, inspect the final diff and report corrections and their reasons,
+   checks passed, failed or blocked, and anything left for the owner. Never weaken a check to
+   obtain a pass or describe an unrun check as passed.
+6. Do not version bump unless explicitly requested to by owner.

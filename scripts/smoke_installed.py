@@ -12,7 +12,8 @@ materials = scriptspell.prepare_authoring('Threshold an exact VAF.', {
 proposal = {
     'source': 'from decimal import Decimal\ndef transform(inputs):\n    return {"eligible": inputs["vaf"] >= Decimal("0.05")}',
     'summary': 'Compare with an exact threshold.',
-    'assumptions': [], 'unmet_requirements': []}
+    'assumptions': [], 'unmet_requirements': [],
+    'example_input': {'vaf': 1}, 'expected_output': {'eligible': True}}
 assert materials['response_schema']['required'] == list(proposal)
 assert scriptspell.validate_proposal(proposal)['outcome'] == 'ok'
 result = scriptspell.run(proposal['source'], {'vaf': Decimal('0.049999999999999999')}, ['eligible'])

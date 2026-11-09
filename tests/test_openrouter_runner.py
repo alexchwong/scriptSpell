@@ -15,7 +15,7 @@ def runner(monkeypatch):
     return m
 
 def proposal(source):
-    return json.dumps(dict(source=source,summary='Synthetic',assumptions=[],unmet_requirements=[])),{},'test/model'
+    return json.dumps(dict(source=source,summary='Synthetic',assumptions=[],unmet_requirements=[],example_input={},expected_output={'out':None})),{},'test/model'
 
 def test_held_out_and_budget(runner):
     calls=[]

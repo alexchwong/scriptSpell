@@ -79,7 +79,7 @@ def main(argv=None):
     jobs = [(task_id, title, level, variants[level])
             for task_id, (title, variants) in zip(task_ids, PRESETS)
             if not args.task or task_id in args.task for level in difficulties]
-    print(f"{settings['model']} · up to {len(jobs)} paid requests · "
+    print(f"{settings['model']} · up to {2 * len(jobs)} paid requests · "
           f'{args.examples} examples and {args.max_tokens} output tokens per request', flush=True)
     if args.dry_run:
         for task_id, title, level, instruction in jobs:

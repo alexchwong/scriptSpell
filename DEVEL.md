@@ -54,7 +54,7 @@ Run the playground from the checkout. Keep `ui/` out of the wheel and sdist.
 The browser uses the public `AuthoringSession` workflow. The adapter uses pinned
 modelSpell 0.3.0 for discovery, setting checks and dispatch. The library imports
 neither UI nor model transport. Blank generation settings use provider defaults.
-Model operations make one request with a 120-second timeout. Generation does not
+Model requests have a 120-second timeout. Generation retries a format error once. It does not
 execute code. Accepted corrections and proposed repairs run the suite in Monty.
 
 The server binds only to 127.0.0.1 and checks a per-launch token and local Host/Origin.

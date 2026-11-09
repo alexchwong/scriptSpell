@@ -22,10 +22,10 @@ def test_default_and_all_preview_without_key(runner, capsys, tmp_path):
     report = tmp_path / 'preview.json'
     assert runner.main(['--dry-run', '--report', str(report)]) == 0
     preview = capsys.readouterr().out
-    assert 'up to 20 paid requests' in preview and preview.count('[medium]') == 20
+    assert 'up to 40 paid requests' in preview and preview.count('[medium]') == 20
     assert runner.main(['--dry-run', '--difficulty', 'all', '--report', str(report)]) == 0
     preview = capsys.readouterr().out
-    assert 'up to 60 paid requests' in preview
+    assert 'up to 120 paid requests' in preview
     assert all(preview.count(f'[{level}]') == 20 for level in runner.DIFFICULTIES)
     assert not report.exists()
 

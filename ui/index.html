@@ -51,7 +51,7 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 <div><label for="reasoning">Reasoning level</label><select id="reasoning"><option value="">Provider default</option><option>off</option><option>low</option><option>medium</option><option>high</option></select></div>
 <div><label for="maxTokens">Max output tokens</label><input id="maxTokens" type="number" min="1" step="1" placeholder="Provider default"></div>
 </div>
-<div class="actions"><button id="generate" class="primary">Generate</button><small>One OpenRouter request per generation, correction, or repair. Settings are requested values.</small></div>
+<div class="actions"><button id="generate" class="primary">Generate</button><small>Generation can make a second OpenRouter request if the first reply has a format error. Settings are requested values.</small></div>
 <p class="note muted">Use synthetic data. Model actions send instructions and relevant examples or code to OpenRouter.</p>
 </section>
 <div id="status" role="status" aria-live="polite"></div>

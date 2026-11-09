@@ -122,7 +122,7 @@ if failed:
 print(session.export(revision))
 ```
 
-Generation makes one request for Python and all 1–20 examples. Use `examples=[{"inputs":
+Generation requests Python and all 1–20 examples together, with one retry for a format error. Use `examples=[{"inputs":
 ..., "outputs": ...}]` for structured examples the workflow can verify against the
 response. Supplied parts are preserved by value and incomplete pairs can be filled.
 Examples embedded in prose rely on the model's interpretation. Expected outputs are
@@ -160,8 +160,9 @@ python -m scripts.check_authoring_presets --task 02 --model qwen/qwen3-coder-nex
 python -m scripts.check_authoring_presets
 ```
 
-The default batch makes up to 20 requests, one per medium preset, and generates three
-examples per request. `--difficulty all` runs up to 60 variants. Set temperature,
+The default batch runs 20 medium presets and generates three examples per proposal.
+Generation retries a format error once, for up to 40 requests by default.
+`--difficulty all` runs 60 variants, for up to 120 requests. Set temperature,
 reasoning, token cap, timeout and report path with `--temperature`, `--reasoning`,
 `--max-tokens`, `--timeout`, and `--report`. The default report is
 `reports/authoring_presets.json`. Exit codes are 0 for PASS, 1 for FAIL, and 2 for BLOCKED.

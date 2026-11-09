@@ -52,7 +52,7 @@ def test_generation_keeps_default_schema_and_applies_strict_multi_contract():
                        SETTINGS, 'Trim', example_count=2)
     with pytest.raises(AuthoringError, match='conflicting_example_count'):
         generate_draft(reply(p, calls=calls), SETTINGS, 'Trim', examples=[{'inputs': {}}, {'inputs': {}}])
-    assert len(calls) == 3
+    assert len(calls) == 4
 
 
 def test_correction_failure_regression_restore_and_export(tmp_path):
@@ -119,3 +119,41 @@ def test_null_expected_and_execution_error_are_distinct(tmp_path):
     match, error = session.run(revision)
     assert match['status'] == 'pass' and match['actual'] == {'out': None}
     assert error['status'] == 'error' and 'actual' not in error
+
+
+def test_generation_accepts_one_enclosing_fence_without_retry():
+    calls = []
+    wrapped = '```json\r\n' + json.dumps(proposal(**case(' x ', 'x'))) + '\r\n```'
+
+    def dispatch(materials, settings):
+        calls.append(materials)
+        return SimpleNamespace(text=wrapped, truncated=False, finish_reason='stop')
+
+    draft = generate_draft(dispatch, SETTINGS, 'Trim')
+    assert len(calls) == 1
+    assert draft['examples'][0]['expected_output'] == {'out': 'x'}
+
+
+@pytest.mark.parametrize('second_valid', [True, False])
+def test_generation_retries_format_only_once(second_valid, caplog):
+    calls = []
+    valid = json.dumps(proposal(examples=[case(' x ', 'x'), case(' y ', 'y')]))
+    invalid = 'Here is the result:\n```json\n' + valid + '\n```'
+
+    def dispatch(materials, settings):
+        calls.append((materials, settings))
+        text = valid if len(calls) == 2 and second_valid else invalid
+        return SimpleNamespace(text=text, truncated=False, finish_reason='stop')
+
+    if second_valid:
+        assert len(generate_draft(dispatch, SETTINGS, 'Trim', example_count=2)['examples']) == 2
+    else:
+        with pytest.raises(AuthoringError, match='invalid_json'):
+            generate_draft(dispatch, SETTINGS, 'Trim', example_count=2)
+    first, retry = calls
+    assert retry[0]['user'] == first[0]['user']
+    assert retry[0]['response_schema'] == first[0]['response_schema']
+    assert retry[1] == first[1]
+    assert 'exactly 2 objects' in retry[0]['system']
+    assert invalid not in retry[0]['system']
+    assert 'Retrying scriptSpell draft after invalid_json' in caplog.text

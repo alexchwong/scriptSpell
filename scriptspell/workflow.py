@@ -1,5 +1,7 @@
 """Provider-neutral authoring operations for a multi-example draft."""
 import json
+import logging
+import re
 from copy import deepcopy
 from decimal import Decimal
 from uuid import uuid4
@@ -9,6 +11,10 @@ from .runtime import run
 from .source import validate_source
 
 PAIR = ('example_input', 'expected_output')
+_FORMAT_ERRORS = {'invalid_json', 'duplicate_json_key', 'invalid_json_number',
+                  'invalid_proposal', 'wrong_example_count', 'invalid_example_contract'}
+_LOG = logging.getLogger(__name__)
+_JSON_FENCE = re.compile(r'```(?:json)?[ \t]*\r?\n(.*)\r?\n```', re.IGNORECASE | re.DOTALL)
 
 
 class AuthoringError(ValueError):
@@ -84,7 +90,12 @@ def _response(dispatch, settings, materials):
     result = dispatch(materials, dict(settings))
     if result.truncated or result.finish_reason != 'stop':
         raise AuthoringError('incomplete_model_response')
-    return parse_json(result.text, max_chars=6291456)
+    text = result.text
+    if type(text) is str and len(text) <= 6291456:
+        fence = _JSON_FENCE.fullmatch(text.strip())
+        if fence:
+            text = fence[1]
+    return parse_json(text, max_chars=6291456)
 
 
 def _schema(properties):
@@ -108,8 +119,9 @@ def _generation_materials(instruction, count, interface, supplied):
     language = {key: base['profile'][key] for key in (
         'profile', 'builtins', 'imports', 'data_attributes', 'syntax', 'output_types', 'caveats')}
     return _materials(
-        f'Return one JSON object with Python source, summary, assumptions, unmet_requirements, '
+        f'Return one raw JSON object with Python source, summary, assumptions, unmet_requirements, '
         f'and exactly {count} examples. Every example has example_input and expected_output objects. '
+        'Do not include Markdown fences or surrounding text. '
         'Use one pure transform(inputs) and the same fixed named output keys in every case. '
         'Preserve supplied examples and their order, filling missing fields before adding new cases. '
         'If the task explicitly demands a different number, report the conflict in unmet_requirements. '
@@ -139,7 +151,27 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
 
     settings = validate_model_settings(**settings)
     materials = _generation_materials(instruction, example_count, interface, examples)
-    proposal = _response(dispatch, settings, materials)
+    try:
+        proposal = _response(dispatch, settings, materials)
+        return _validate_draft(proposal, materials, instruction, example_count, examples)
+    except AuthoringError as exc:
+        if exc.code not in _FORMAT_ERRORS:
+            raise
+        _LOG.warning('Retrying scriptSpell draft after %s', exc.code)
+
+    fields = ('Include example_input and expected_output as JSON objects.'
+              if example_count == 1 else
+              f'Include examples as an array of exactly {example_count} objects. '
+              'Each object must contain example_input and expected_output as JSON objects.')
+    retry = dict(materials, system=materials['system'] +
+                 '\nReturn one raw JSON object, with no Markdown or surrounding text. '
+                 'Include source and summary as strings, and assumptions and unmet_requirements '
+                 'as arrays of strings. ' + fields)
+    proposal = _response(dispatch, settings, retry)
+    return _validate_draft(proposal, retry, instruction, example_count, examples)
+
+
+def _validate_draft(proposal, materials, instruction, example_count, examples):
     if type(proposal) is not dict or set(proposal) != set(materials['response_schema']['required']):
         raise AuthoringError('invalid_proposal')
     if example_count == 1:

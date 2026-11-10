@@ -3,7 +3,9 @@ import argparse
 from pathlib import Path
 
 from scriptspell import YamlAuthoring
+from scriptspell.prompt_files import load_preset_contracts
 from scriptspell.staged import StagedAuthoring, _interface
+from scriptspell.yaml_contract import validate_interface
 from scriptspell.workflow import AuthoringError, generation_preview, parse_json
 from ui.presets import DEFAULT_DIFFICULTY, DIFFICULTIES, PRESETS
 from ui.service import prompt_preview
@@ -44,8 +46,12 @@ def main(argv=None):
         task = (PRESETS[int(args.task) - 1][1][args.difficulty] if args.task else
                 args.instruction.read_text(encoding='utf-8'))
         if args.mode != 'legacy-json':
-            interface = parse_json(args.interface.read_text(encoding='utf-8')) if args.interface else None
-            flow = YamlAuthoring(task, args.examples, interface=interface, one_shot=args.mode == 'one-shot-yaml')
+            options = load_preset_contracts()[args.task] if args.task else {}
+            if args.interface:
+                interface = parse_json(args.interface.read_text(encoding='utf-8'))
+                validate_interface(interface)
+                options = dict(interface=interface)
+            flow = YamlAuthoring(task, args.examples, one_shot=args.mode == 'one-shot-yaml', **options)
             if args.stage == 'python':
                 flow.accept('examples', args.examples_yaml.read_text(encoding='utf-8'))
             materials = flow.materials(args.stage)
@@ -59,7 +65,7 @@ def main(argv=None):
             if args.stage == 'python':
                 flow.accept('expectations', args.expected_outputs.read_text(encoding='utf-8'))
             materials = flow.materials(args.stage)
-    except (AuthoringError, OSError, UnicodeError) as exc:
+    except (AuthoringError, OSError, ValueError) as exc:
         issues = getattr(exc, "details", {}).get("issues", [])
         parser.error("\n".join([str(exc), *map(str, issues)]))
     preview = prompt_preview(materials)

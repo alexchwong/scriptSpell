@@ -62,3 +62,50 @@ def test_bad_expectation_stops_without_retry_or_source_call(staged):
 def test_staged_preview_has_correct_budget(staged, capsys):
     assert staged.main(['--dry-run', '--task', '01']) == 0
     assert 'up to 3 paid requests' in capsys.readouterr().out
+
+
+def test_examples_only_records_retry_without_calling_python(staged, monkeypatch, tmp_path):
+    calls = []
+    good = """interface:
+  inputs:
+    - labels: list[str]
+  outputs:
+    - result: list[str]
+examples:
+  - inputs:
+      - labels: [' A ']
+    outputs:
+      - result: [a]
+"""
+    rejected = good.replace('list[str]', 'list[int]', 1).replace("[' A ']", '[false]')
+    replies = iter([rejected, good])
+
+    def send(materials, settings):
+        calls.append(materials)
+        return SimpleNamespace(text=next(replies), truncated=False, finish_reason='stop')
+
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
+    monkeypatch.setattr(staged, 'dispatch', lambda *args, **kwargs: send)
+    path = tmp_path / 'report.json'
+    assert staged.main(['--mode', 'two-call', '--examples-only', '--task', '01',
+                        '--report', str(path)]) == 0
+    report = json.loads(path.read_text())
+    assert report['request_count'] == len(calls) == 2
+    result = report['results'][0]
+    assert [attempt['stage'] for attempt in result['attempts']] == ['examples', 'examples']
+    assert not result['executed'] and not result['valid_draft']
+    assert 'Copy the interface below unchanged' in calls[0]['user']
+    assert '- labels: list[str]' in calls[0]['user']
+    assert 'expected str, got bool' in calls[1]['user']
+    assert calls[1]['user'].endswith(rejected)
+    assert report['examples_validation'] == dict(attempted=1, first_pass=0, final_pass=1,
+                                                  first_pass_rate=0.0, final_pass_rate=1.0)
+
+
+def test_yaml_presets_render_fixed_shapes(staged, capsys):
+    assert staged.main(['--mode', 'two-call', '--examples-only', '--difficulty', 'all',
+                        '--dry-run']) == 0
+    output = capsys.readouterr().out
+    assert 'up to 120 paid requests' in output
+    assert output.count('Required YAML shape') == 60
+    assert 'inputs.departments[].teams[].staff[] requires id' in output

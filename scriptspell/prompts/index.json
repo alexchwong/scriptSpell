@@ -14,6 +14,7 @@
     ]
   },
   "default_difficulty": "medium",
+  "preset_contracts": "preset_contracts.json",
   "templates": {
     "shared/monty": "shared/monty.md",
     "shared/proposal_examples": "shared/proposal_examples.md",
@@ -33,7 +34,9 @@
     "stages/yaml-one-shot": "stages/yaml-one-shot.md",
     "stages/yaml-python": "stages/yaml-python.md",
     "stages/yaml-retry": "stages/yaml-retry.md",
-    "shared/yaml-contract": "shared/yaml-contract.md"
+    "shared/yaml-contract": "shared/yaml-contract.md",
+    "shared/yaml-example": "shared/yaml-example.md",
+    "stages/yaml-fixed-interface": "stages/yaml-fixed-interface.md"
   },
   "presets": [
     {

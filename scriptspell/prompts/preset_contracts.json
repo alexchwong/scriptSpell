@@ -1,0 +1,496 @@
+{
+  "01": {
+    "interface": {
+      "inputs": {
+        "labels": "list[str]"
+      },
+      "outputs": {
+        "result": "list[str]"
+      }
+    }
+  },
+  "02": {
+    "interface": {
+      "inputs": {
+        "records": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.records[]": {
+        "required": {
+          "id": "str | int"
+        },
+        "allow_extra": true
+      },
+      "outputs.result[]": {
+        "required": {
+          "id": "str | int"
+        },
+        "allow_extra": true
+      }
+    }
+  },
+  "03": {
+    "interface": {
+      "inputs": {
+        "transactions": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.transactions[]": {
+        "required": {
+          "account": "str",
+          "amount_cents": "int"
+        }
+      },
+      "outputs.result[]": {
+        "required": {
+          "account": "str",
+          "count": "int",
+          "total_cents": "int"
+        }
+      }
+    }
+  },
+  "04": {
+    "interface": {
+      "inputs": {
+        "products": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.products[]": {
+        "required": {
+          "sku": "str",
+          "quantity": "int"
+        },
+        "allow_extra": true
+      },
+      "outputs.result[]": {
+        "required": {
+          "sku": "str",
+          "quantity": "int"
+        },
+        "allow_extra": true
+      }
+    }
+  },
+  "05": {
+    "interface": {
+      "inputs": {
+        "readings": "list[dict]",
+        "lower": "int | Decimal",
+        "upper": "int | Decimal"
+      },
+      "outputs": {
+        "below": "list[dict]",
+        "within": "list[dict]",
+        "above": "list[dict]",
+        "missing": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.readings[]": {
+        "required": {},
+        "optional": {
+          "value": "int | Decimal | None"
+        },
+        "allow_extra": true
+      },
+      "outputs.below[]": {
+        "required": {
+          "value": "int | Decimal"
+        },
+        "allow_extra": true
+      },
+      "outputs.within[]": {
+        "required": {
+          "value": "int | Decimal"
+        },
+        "allow_extra": true
+      },
+      "outputs.above[]": {
+        "required": {
+          "value": "int | Decimal"
+        },
+        "allow_extra": true
+      },
+      "outputs.missing[]": {
+        "required": {},
+        "optional": {
+          "value": "None"
+        },
+        "allow_extra": true
+      }
+    }
+  },
+  "06": {
+    "interface": {
+      "inputs": {
+        "lines": "list[str]"
+      },
+      "outputs": {
+        "values": "dict[str, str]",
+        "malformed_lines": "list[int]"
+      }
+    }
+  },
+  "07": {
+    "interface": {
+      "inputs": {
+        "orders": "list[dict]"
+      },
+      "outputs": {
+        "errors": "list[dict]"
+      }
+    },
+    "records": {
+      "outputs.errors[]": {
+        "required": {
+          "index": "int",
+          "field": "str"
+        }
+      }
+    },
+    "guidance": "Check each order for id (nonempty str), quantity (positive int), and unit_price_cents (nonnegative int). Input orders may omit any of those fields or contain invalid values."
+  },
+  "08": {
+    "interface": {
+      "inputs": {
+        "departments": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.departments[]": {
+        "required": {
+          "id": "str | int",
+          "teams": "list[dict]"
+        }
+      },
+      "inputs.departments[].teams[]": {
+        "required": {
+          "id": "str | int",
+          "staff": "list[dict]"
+        }
+      },
+      "inputs.departments[].teams[].staff[]": {
+        "required": {
+          "id": "str | int"
+        }
+      },
+      "outputs.result[]": {
+        "required": {
+          "department_id": "str | int",
+          "team_id": "str | int",
+          "staff_id": "str | int"
+        }
+      }
+    }
+  },
+  "09": {
+    "interface": {
+      "inputs": {
+        "orders": "list[dict]",
+        "customers": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.orders[]": {
+        "required": {
+          "customer_id": "str | int"
+        },
+        "allow_extra": true
+      },
+      "inputs.customers[]": {
+        "required": {
+          "id": "str | int",
+          "name": "str"
+        }
+      },
+      "outputs.result[]": {
+        "required": {
+          "customer_id": "str | int",
+          "customer_name": "str | None"
+        },
+        "allow_extra": true
+      }
+    }
+  },
+  "10": {
+    "interface": {
+      "inputs": {
+        "old": "dict[str, int]",
+        "new": "dict[str, int]"
+      },
+      "outputs": {
+        "added": "list[str]",
+        "removed": "list[str]",
+        "changed": "list[dict]"
+      }
+    },
+    "records": {
+      "outputs.changed[]": {
+        "required": {
+          "sku": "str",
+          "old_quantity": "int",
+          "new_quantity": "int"
+        }
+      }
+    }
+  },
+  "11": {
+    "interface": {
+      "inputs": {
+        "measurements": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.measurements[]": {
+        "required": {
+          "subject_id": "str | int",
+          "analyte": "str",
+          "value": "int | float | Decimal"
+        }
+      },
+      "outputs.result[]": {
+        "required": {
+          "subject_id": "str | int",
+          "values": "dict[str, int | float | Decimal]"
+        }
+      }
+    }
+  },
+  "12": {
+    "interface": {
+      "inputs": {
+        "intervals": "list[list[int]]"
+      },
+      "outputs": {
+        "merged": "list[list[int]]",
+        "invalid": "list[list[int]]"
+      }
+    },
+    "records": {
+      "inputs.intervals[]": {
+        "length": 2
+      },
+      "outputs.merged[]": {
+        "length": 2
+      },
+      "outputs.invalid[]": {
+        "length": 2
+      }
+    }
+  },
+  "13": {
+    "interface": {
+      "inputs": {
+        "values": "list[int]",
+        "window": "int"
+      },
+      "outputs": {
+        "result": "list[dict | None]"
+      }
+    },
+    "records": {
+      "outputs.result[]": {
+        "required": {
+          "numerator": "int",
+          "denominator": "int"
+        },
+        "nullable": true
+      }
+    }
+  },
+  "14": {
+    "interface": {
+      "inputs": {
+        "invoices": "list[dict]",
+        "payments": "list[dict]"
+      },
+      "outputs": {
+        "unpaid": "list[dict]",
+        "partial": "list[dict]",
+        "settled": "list[dict]",
+        "overpaid": "list[dict]",
+        "unmatched_payments": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.invoices[]": {
+        "required": {
+          "id": "str | int",
+          "balance_cents": "int"
+        }
+      },
+      "inputs.payments[]": {
+        "required": {
+          "invoice_id": "str | int",
+          "amount_cents": "int"
+        }
+      },
+      "outputs.unpaid[]": {
+        "required": {
+          "id": "str | int",
+          "balance_cents": "int",
+          "paid_cents": "int"
+        }
+      },
+      "outputs.partial[]": {
+        "required": {
+          "id": "str | int",
+          "balance_cents": "int",
+          "paid_cents": "int"
+        }
+      },
+      "outputs.settled[]": {
+        "required": {
+          "id": "str | int",
+          "balance_cents": "int",
+          "paid_cents": "int"
+        }
+      },
+      "outputs.overpaid[]": {
+        "required": {
+          "id": "str | int",
+          "balance_cents": "int",
+          "paid_cents": "int"
+        }
+      },
+      "outputs.unmatched_payments[]": {
+        "required": {
+          "invoice_id": "str | int",
+          "amount_cents": "int"
+        }
+      }
+    }
+  },
+  "15": {
+    "interface": {
+      "inputs": {
+        "events": "list[dict]",
+        "start": "int",
+        "end": "int",
+        "severity_order": "list[str]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.events[]": {
+        "required": {
+          "category": "str",
+          "timestamp": "int",
+          "severity": "str"
+        }
+      },
+      "outputs.result[]": {
+        "required": {
+          "category": "str",
+          "count": "int",
+          "highest_severity": "str"
+        }
+      }
+    }
+  },
+  "16": {
+    "interface": {
+      "inputs": {
+        "text": "str",
+        "replacements": "dict[str, str]"
+      },
+      "outputs": {
+        "text": "str",
+        "unknown": "list[str]"
+      }
+    }
+  },
+  "17": {
+    "interface": {
+      "inputs": {
+        "record": "dict",
+        "fields": "list[str]"
+      },
+      "outputs": {
+        "selected": "dict",
+        "missing": "list[str]"
+      }
+    }
+  },
+  "18": {
+    "interface": {
+      "inputs": {
+        "configurations": "list[dict]"
+      },
+      "outputs": {
+        "result": "dict"
+      }
+    }
+  },
+  "19": {
+    "interface": {
+      "inputs": {
+        "tasks": "list[dict]",
+        "completed_ids": "list[str | int]"
+      },
+      "outputs": {
+        "ready": "list[str | int]",
+        "unknown": "list[str | int]"
+      }
+    },
+    "records": {
+      "inputs.tasks[]": {
+        "required": {
+          "id": "str | int",
+          "dependencies": "list[str | int]"
+        }
+      }
+    }
+  },
+  "20": {
+    "interface": {
+      "inputs": {
+        "stock": "int",
+        "requests": "list[dict]"
+      },
+      "outputs": {
+        "result": "list[dict]"
+      }
+    },
+    "records": {
+      "inputs.requests[]": {
+        "required": {
+          "id": "str | int",
+          "quantity": "int",
+          "priority": "int"
+        }
+      },
+      "outputs.result[]": {
+        "required": {
+          "id": "str | int",
+          "filled": "int",
+          "remaining": "int"
+        }
+      }
+    }
+  }
+}

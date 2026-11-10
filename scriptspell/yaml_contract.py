@@ -217,7 +217,48 @@ def _variables(value, path, issues):
     return fields
 
 
-def validate_examples(text, count, *, one_shot=False, interface=None):
+def _record_rule(value, steps, rule, path, issues):
+    """Apply a trusted preset rule to each matching value, preserving conversions."""
+    if value is _INVALID:
+        return value
+    if steps:
+        field = steps[0]
+        name = field.removesuffix('[]')
+        if type(value) is not dict or name not in value:
+            return value
+        value = value.copy()
+        location = f'{path}.{name}'
+        if field.endswith('[]'):
+            items = value[name]
+            if type(items) is list:
+                value[name] = [_record_rule(item, steps[1:], rule, f'{location}[{index}]', issues)
+                               for index, item in enumerate(items, 1)]
+        else:
+            value[name] = _record_rule(value[name], steps[1:], rule, location, issues)
+        return value
+    if 'length' in rule:
+        if type(value) is list and len(value) != rule['length']:
+            issues.append(f"{path}: provide exactly {rule['length']} items, found {len(value)}.")
+        return value
+    if value is None and rule.get('nullable'):
+        return value
+    if type(value) is not dict:
+        issues.append(f'{path}: use a mapping, got {type(value).__name__}.')
+        return value
+    required, optional = rule['required'], rule.get('optional', {})
+    for name in sorted(required.keys() - value.keys()):
+        issues.append(f'{path}: add the missing {name!r} key.')
+    specs = required | optional
+    if not rule.get('allow_extra'):
+        for name in sorted(value.keys() - specs.keys()):
+            issues.append(f'{path}: remove the unexpected {name!r} key.')
+    value = value.copy()
+    for name in sorted(value.keys() & specs.keys()):
+        value[name] = _typed(value[name], _type(specs[name]), f'{path}.{name}', issues)
+    return value
+
+
+def validate_examples(text, count, *, one_shot=False, interface=None, records=None):
     """Return the original data document and normalised pairs, or all verifiable errors."""
     data, issues = read_yaml(text)
     document = _keys(data, ('interface', 'examples', 'source') if one_shot else
@@ -226,14 +267,23 @@ def validate_examples(text, count, *, one_shot=False, interface=None):
     contracts = {}
     for side in ('inputs', 'outputs'):
         fields = _variables(declared[side], f'interface.{side}', issues) if side in declared else None
-        if fields is None:
+        if fields is not None:
+            if side == 'outputs' and not fields:
+                issues.append('interface.outputs: declare at least one output.')
+            if interface is not None:
+                expected = interface[side]
+                for name in sorted(expected.keys() - fields.keys()):
+                    issues.append(f'interface.{side}: add {name!r} with type {expected[name]!r}.')
+                for name in sorted(fields.keys() - expected.keys()):
+                    issues.append(f'interface.{side}: remove the unexpected variable {name!r}.')
+                for name in expected:
+                    if name in fields and fields[name] != expected[name]:
+                        issues.append(f'interface.{side}.{name}: use the exact type {expected[name]!r}.')
+        reference = interface[side] if interface is not None else fields
+        if reference is None:
             continue
-        if side == 'outputs' and not fields:
-            issues.append('interface.outputs: declare at least one output.')
-        if interface is not None and fields != interface.get(side):
-            issues.append(f'interface.{side}: preserve the supplied names and types exactly.')
         specs = contracts[side] = {}
-        for name, expression in fields.items():
+        for name, expression in reference.items():
             try:
                 specs[name] = _type(expression)
             except ValueError:
@@ -264,6 +314,8 @@ def validate_examples(text, count, *, one_shot=False, interface=None):
                         fields = {key: _typed(value, specs[key], f'{location}.{key}', issues)
                                   if specs.get(key) is not None else value for key, value in fields.items()}
                     pair[side] = fields
+                for selector, rule in (records or {}).items():
+                    pair = _record_rule(pair, selector.split('.'), rule, path, issues)
                 pairs.append(pair)
     if issues:
         raise YamlContractError(issues)
@@ -271,7 +323,8 @@ def validate_examples(text, count, *, one_shot=False, interface=None):
 
 
 class _Dumper(yaml.SafeDumper):
-    pass
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, indentless=False)
 
 
 def _represent_string(dumper, value):

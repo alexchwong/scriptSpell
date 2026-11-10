@@ -42,31 +42,81 @@ uses the playground catalog, modelSpell adapter and public generation/test funct
 Keep it opt-in and use mocked completions in automated tests. The six-task runner above
 uses fixed visible and held-out answers, while preset batches test generated cases.
 
-### Experimental staged authoring benchmark
+### Local verification of YAML authoring
 
-With the development extra installed and `OPENROUTER_API_KEY` set, compare
-the existing preset runner with the staged runner using the same options.
+Run from the repository root with the development extra installed. First run
+the offline checks. These use simulated model replies and exercise Monty locally.
 
 ```sh
-python -m scripts.check_authoring_presets --task 01 --difficulty easy --examples 3
-python -m scripts.check_authoring_staged --task 01 --difficulty easy --examples 3
+python -m pytest -q tests/test_yaml_authoring.py tests/test_authoring_staged.py tests/test_ui.py
 ```
 
-The staged runner requests inputs, expected outputs, and plain Python in three
-separate calls. It makes one request per stage and stops a preset at its first
-failed stage. Monty runs all cases locally. Only the first pair is shown to the
-coder. With one example there are zero held-back cases.
+Both live YAML modes use `scripts.check_authoring_staged`. Set `OPENROUTER_API_KEY`
+in your local shell. Run the same preset, difficulty, model, and example count
+in both modes and keep the reports separate. Start with a single preset.
 
-The staged report defaults to `reports/authoring_staged.json` and includes
-request counts, elapsed times, raw replies, validation outcomes, and separate
-visible and held-back case results. The default 20-preset staged batch costs up to
-60 requests. Use `--dry-run` to preview the request budget.
+```sh
+python -m scripts.check_authoring_staged --mode two-call \
+  --model qwen/qwen3-coder-next --task 02 --difficulty easy --examples 3 \
+  --report reports/yaml_two_call_smoke.json
 
-For a single preset and difficulty, `--interface FILE` supplies the JSON object
-of named input and output fields. Each field maps to a JSON type name, for
-example `{"inputs":{"labels":"array"},"outputs":{"result":"array"}}`.
-Without this option the input stage proposes the interface. Held-back
-expectations are model-generated, so mismatches still require review.
+python -m scripts.check_authoring_staged --mode one-shot-yaml \
+  --model qwen/qwen3-coder-next --task 02 --difficulty easy --examples 3 \
+  --report reports/yaml_one_shot_smoke.json
+```
+
+Append `--dry-run` to either command to preview the initial prompts and request
+budget without a key or model calls. After the smoke runs, repeat `--task` to
+choose more presets or omit it to run all 20. Use new report filenames for the
+larger runs. Two-call makes up to three requests per preset and One-shot up to
+two, including one possible YAML retry. The full 20-preset comparison therefore
+caps at 60 and 40 requests respectively.
+
+Exit code `0` means PASS, `1` means FAIL, and `2` means BLOCKED. A provider or
+runtime blocker can stop the batch. Check the completed preset count in the
+terminal alongside `tasks_requested` in the report.
+
+- Check `request_count` and `attempts` for the stages called, YAML retries,
+  validator diagnostics, and raw model replies.
+- Check `valid_draft`, `executed`, and `failed_stage` separately to distinguish
+  authoring failures from execution failures and output mismatches.
+- Compare `examples` and `held_back`. With three examples, Two-call shows the
+  first pair to the coder and runs it plus two held-back pairs. One-shot has no
+  held-back cases. A pass means the Python agrees with generated expectations.
+  Review the expected and actual values when they differ.
+
+#### Check example structure before generating Python
+
+Both YAML benchmarks use fixed input and output names and types for each preset,
+with the same contract at all three difficulties. Edit
+`scriptspell/prompts/preset_contracts.json` to change a preset contract. Record
+rules describe nested fields where required. Free-form tasks can still infer
+their interface.
+
+```sh
+python -m scripts.check_authoring_staged --mode two-call --examples-only \
+  --model qwen/qwen3-coder-next --difficulty easy --examples 3 \
+  --report reports/yaml_examples_only.json
+```
+
+Use `--task 02 --dry-run` to inspect the exact initial prompt for one preset
+before running it. Omit `--task` to run all 20. This check makes at most two
+requests per preset (40 across all 20), including the single YAML retry. It
+does not generate or run Python.
+
+In `examples_validation`, compare `first_pass_rate` with `final_pass_rate`.
+Both use the number of presets that reached the examples stage as denominator.
+Provider failures are marked BLOCKED and do not count as passes. The rates
+measure document structure, field names, and types. They do not measure whether
+the model calculated the expected values correctly. Each result contains
+`examples_first_pass`, `examples_valid`, and the prompts, replies and diagnostics
+under `attempts`.
+
+Use `--mode legacy-json` for the older three-call JSON benchmark. For a single
+preset and difficulty, `--interface FILE` supplies named input and output types
+as a JSON object. YAML modes use declarations such as `list[str]`, while the
+legacy benchmark uses JSON type names such as `array`. An explicit YAML
+interface replaces the preset contract, including its nested rules.
 
 ### Developer playground
 
@@ -113,15 +163,13 @@ Preview System and User messages before sending. Copy the full System message
 to include a response schema when one applies. The render-only CLI uses the
 same message formatting:
 
-\`\`\`sh
-python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage examples --examples 3 --role system
+```sh
+python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage examples --examples 3
 python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage python --examples 3 --examples-yaml examples.yaml
 python -m scripts.render_authoring_prompt --task 02 --mode one-shot-yaml --stage one-shot
-\`\`\`
+```
 
-The staged benchmark accepts \`--mode two-call\` and \`--mode one-shot-yaml\`.
-Keep live runs opt-in. Check the per-stage diagnostics, valid-draft marker,
-execution marker, and case results separately.
+For live runs, follow [Local verification of YAML authoring](#local-verification-of-yaml-authoring).
 
 Match the preset, difficulty, example count, and optional interface across stages.
 Copy System and User messages separately when the target chat supports both roles.

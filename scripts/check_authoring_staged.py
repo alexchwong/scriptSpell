@@ -1,4 +1,4 @@
-"""Experimental authoring benchmark with separate inputs, expectations and Python calls."""
+"""Benchmark the YAML and legacy JSON authoring modes on the playground presets."""
 import argparse
 import json
 import os
@@ -8,7 +8,9 @@ from time import monotonic
 import modelspell
 
 from scriptspell import AuthoringError, YamlAuthoring, run_examples, validate_model_settings
+from scriptspell.prompt_files import load_preset_contracts
 from scriptspell.staged import StageError, StagedAuthoring, _interface, _MAX_REPLY
+from scriptspell.yaml_contract import validate_interface
 from scriptspell.workflow import display_json, parse_json
 from scripts.check_authoring_presets import BLOCKED_OUTCOMES, DEFAULT_MODEL
 from ui.presets import DEFAULT_DIFFICULTY, DIFFICULTIES, PRESETS
@@ -18,7 +20,8 @@ def load_interface(path):
     return _interface(parse_json(path.read_text(encoding='utf-8')))
 
 
-def evaluate(send, settings, instruction, example_count, *, interface=None, mode="legacy-json"):
+def evaluate(send, settings, instruction, example_count, *, interface=None, mode="legacy-json",
+             examples_only=False, records=None, guidance=None):
     attempts = []
     key = os.getenv('OPENROUTER_API_KEY', '').strip()
     result = {'attempts': attempts}
@@ -91,10 +94,15 @@ def evaluate(send, settings, instruction, example_count, *, interface=None, mode
             result['expectations'] = flow.outputs
             request('python')
         else:
-            flow = YamlAuthoring(instruction, example_count, interface=interface, one_shot=mode == 'one-shot-yaml')
+            flow = YamlAuthoring(instruction, example_count, interface=interface, one_shot=mode == 'one-shot-yaml',
+                                 records=records, guidance=guidance)
             request('one-shot' if flow.one_shot else 'examples')
             result['examples_yaml'] = flow.examples_yaml()
             if not flow.one_shot:
+                result['examples_valid'] = True
+                result['examples_first_pass'] = attempts[0]['validation']['outcome'] == 'ok'
+                if examples_only:
+                    return dict(result, status='PASS', valid_draft=False, executed=False)
                 request('python')
         draft = flow.draft()
         result['valid_draft'] = True
@@ -121,6 +129,8 @@ def evaluate(send, settings, instruction, example_count, *, interface=None, mode
     failed_stage = attempts[-1]['stage'] if attempts else 'interface'
     if attempts and attempts[-1].get('validation', {}).get('outcome') == 'ok':
         failed_stage = 'execution'
+    if failed_stage == 'examples':
+        result.update(examples_valid=False, examples_first_pass=False)
     return dict(result, status=status, outcome=outcome, failed_stage=failed_stage)
 
 
@@ -149,6 +159,7 @@ def main(argv=None):
     parser.add_argument('--difficulty', choices=(*DIFFICULTIES, 'all'), default=DEFAULT_DIFFICULTY)
     parser.add_argument('--model', default=DEFAULT_MODEL, help=f'OpenRouter model ID (default: {DEFAULT_MODEL}).')
     parser.add_argument('--mode', choices=('legacy-json', 'two-call', 'one-shot-yaml'), default='legacy-json')
+    parser.add_argument('--examples-only', action='store_true', help='Stop after structural validation in two-call mode.')
     parser.add_argument('--examples', type=int, help='Examples per prompt, 1–20 (default: 1 for YAML, 3 for JSON).')
     parser.add_argument('--temperature', type=float, default=0)
     parser.add_argument('--reasoning', choices=('off', 'low', 'medium', 'high'), help='Default: provider setting.')
@@ -164,6 +175,8 @@ def main(argv=None):
         for task_id, (title, _) in zip(task_ids, PRESETS):
             print(f'{task_id}  {title}')
         return 0
+    if args.examples_only and args.mode != 'two-call':
+        parser.error('--examples-only requires --mode two-call')
     if args.examples is None:
         args.examples = 3 if args.mode == 'legacy-json' else 1
     if not 1 <= args.examples <= 20 or not 1 <= args.max_tokens <= 16384 or not 0 < args.timeout <= 300:
@@ -178,21 +191,32 @@ def main(argv=None):
     jobs = [(task_id, title, level, variants[level])
             for task_id, (title, variants) in zip(task_ids, PRESETS)
             if not args.task or task_id in args.task for level in difficulties]
-    options = {'mode': args.mode}
+    contracts = load_preset_contracts() if args.mode != 'legacy-json' else {}
+    override = None
     if args.interface is not None:
         if len(jobs) != 1:
             parser.error('--interface requires one preset and one difficulty')
         try:
-            options['interface'] = (load_interface(args.interface) if args.mode == 'legacy-json'
-                                    else parse_json(args.interface.read_text(encoding='utf-8')))
-        except (AuthoringError, OSError, UnicodeError) as exc:
+            interface = (load_interface(args.interface) if args.mode == 'legacy-json'
+                         else parse_json(args.interface.read_text(encoding='utf-8')))
+            override = dict(interface=interface)
+            if args.mode != 'legacy-json':
+                validate_interface(interface)
+        except (AuthoringError, OSError, ValueError) as exc:
             parser.error(f'invalid interface: {exc}')
-    max_calls = 2 if args.mode == 'one-shot-yaml' else 3
+    max_calls = 2 if args.examples_only or args.mode == 'one-shot-yaml' else 3
     print(f"{settings['model']} · up to {max_calls * len(jobs)} paid requests · "
           f'{args.examples} examples and {args.max_tokens} output tokens per request', flush=True)
     if args.dry_run:
         for task_id, title, level, instruction in jobs:
-            print(f'\n{task_id} {title} [{level}]\n{instruction}')
+            print(f'\n{task_id} {title} [{level}]')
+            if args.mode == 'legacy-json':
+                print(instruction)
+            else:
+                flow = YamlAuthoring(instruction, args.examples, one_shot=args.mode == 'one-shot-yaml',
+                                     **(override or contracts[task_id]))
+                materials = flow.materials('one-shot' if flow.one_shot else 'examples')
+                print(materials['system'] + '\n\n' + materials['user'])
         return 0
     key = os.getenv('OPENROUTER_API_KEY', '').strip()
     if not key:
@@ -210,9 +234,19 @@ def main(argv=None):
 
     report = dict(status='INCOMPLETE', mode=args.mode, settings=dict(settings, example_count=args.examples, timeout=args.timeout),
                   tasks_requested=len(jobs), request_count=0, results=results)
+    if args.mode == 'two-call':
+        report['examples_only'] = args.examples_only
     args.report.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
+        if args.mode == 'two-call':
+            measured = [item for item in results if 'examples_valid' in item]
+            first = sum(item['examples_first_pass'] for item in measured)
+            final = sum(item['examples_valid'] for item in measured)
+            total = len(measured)
+            report['examples_validation'] = dict(attempted=total, first_pass=first, final_pass=final,
+                                                  first_pass_rate=first / total if total else None,
+                                                  final_pass_rate=final / total if total else None)
         args.report.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 
     save()  # Confirm the destination is writable before making any paid requests.
@@ -221,7 +255,8 @@ def main(argv=None):
         for task_id, title, level, instruction in jobs:
             before = requests
             started = monotonic()
-            result = evaluate(counted_send, settings, instruction, args.examples, **options)
+            result = evaluate(counted_send, settings, instruction, args.examples, mode=args.mode,
+                              examples_only=args.examples_only, **(override or contracts.get(task_id, {})))
             results.append(dict(result, task=task_id, title=title, difficulty=level, instruction=instruction,
                                 request_count=requests - before, elapsed_seconds=monotonic() - started))
             report['request_count'] = requests

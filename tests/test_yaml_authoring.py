@@ -162,3 +162,63 @@ def test_float_tolerance_is_recursive_and_type_sensitive():
     assert not same_value(1.0, Decimal('1.0'))
     assert not same_value(Decimal('1.0000000001'), Decimal('1'))
     assert not same_value(0.001, 0.0)
+
+
+def test_fixed_contract_checks_nested_rows_even_when_echo_is_missing():
+    from scriptspell.prompt_files import load_preset_contracts
+
+    contract = load_preset_contracts()['08']
+    text = """interface:
+  outputs:
+    - result: list[str]
+examples:
+  - inputs:
+      - departments:
+          - id: 1
+            teams:
+              - id: 2
+                staff:
+                  - name: Alice
+    outputs:
+      - result:
+          - department_id: 1
+            team_id: false
+"""
+    with pytest.raises(YamlContractError) as error:
+        validate_examples(text, 1, **contract)
+    issues = error.value.details['issues']
+    assert any("interface: add the missing 'inputs'" in issue for issue in issues)
+    assert any("interface.outputs.result: use the exact type 'list[dict]'" in issue for issue in issues)
+    assert any("staff[1]: add the missing 'id'" in issue for issue in issues)
+    assert any("staff[1]: remove the unexpected 'name'" in issue for issue in issues)
+    assert any("result[1]: add the missing 'staff_id'" in issue for issue in issues)
+    assert any('result[1].team_id:' in issue for issue in issues)
+
+
+def test_nested_decimal_is_normalised_without_changing_yaml():
+    from scriptspell.prompt_files import load_preset_contracts
+
+    flow = YamlAuthoring('Classify readings', **load_preset_contracts()['05'])
+    flow.accept('examples', """interface:
+  inputs:
+    - readings: list[dict]
+    - lower: int | Decimal
+    - upper: int | Decimal
+  outputs:
+    - below: list[dict]
+    - within: list[dict]
+    - above: list[dict]
+    - missing: list[dict]
+examples:
+  - inputs:
+      - readings: [{value: '1.1'}, {}]
+      - lower: '1.0'
+      - upper: '2.0'
+    outputs:
+      - below: []
+      - within: [{value: '1.1'}]
+      - above: []
+      - missing: [{}]
+""")
+    assert flow.pairs[0]['inputs']['readings'] == [{'value': Decimal('1.1')}, {}]
+    assert "value: '1.1'" in flow.examples_yaml()

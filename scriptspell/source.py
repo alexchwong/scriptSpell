@@ -1,8 +1,9 @@
 """Nonexecuting AST policy, run only inside the bounded trusted driver."""
 import ast
+from math import isfinite
 from .profile import BUILTINS, DATA_METHODS, IMPORTS, FORBIDDEN_NAMES, RESERVED_NAMES
 
-ALLOWED = {getattr(ast, n) for n in '''Module NamedExpr Match match_case MatchValue MatchSingleton MatchSequence MatchMapping MatchStar MatchAs MatchOr FunctionDef Lambda arguments arg Return Assign AnnAssign AugAssign Expr If For While Break Continue Pass Raise Assert Try ExceptHandler Call Name Load Store Constant List Dict Tuple Set Subscript Slice Attribute BinOp UnaryOp BoolOp Compare IfExp ListComp DictComp SetComp GeneratorExp comprehension keyword Starred JoinedStr FormattedValue Add Sub Mult FloorDiv Mod BitAnd BitOr BitXor LShift RShift Invert UAdd USub Not And Or Eq NotEq Lt LtE Gt GtE In NotIn Is IsNot Import ImportFrom alias'''.split()}
+ALLOWED = {getattr(ast, n) for n in '''Module NamedExpr Match match_case MatchValue MatchSingleton MatchSequence MatchMapping MatchStar MatchAs MatchOr FunctionDef Lambda arguments arg Return Assign AnnAssign AugAssign Expr If For While Break Continue Pass Raise Assert Try ExceptHandler Call Name Load Store Constant List Dict Tuple Set Subscript Slice Attribute BinOp UnaryOp BoolOp Compare IfExp ListComp DictComp SetComp GeneratorExp comprehension keyword Starred JoinedStr FormattedValue Add Sub Mult Div FloorDiv Mod BitAnd BitOr BitXor LShift RShift Invert UAdd USub Not And Or Eq NotEq Lt LtE Gt GtE In NotIn Is IsNot Import ImportFrom alias'''.split()}
 
 
 def private(name):
@@ -108,7 +109,8 @@ def check(source, limits):
                 issue(n,'call_denied',n.func.id,'Call is unavailable in the pure data profile.')
             elif not isinstance(n.func,(ast.Name,ast.Attribute,ast.Lambda,ast.Subscript,ast.Call)):
                 issue(n,'call_denied',type(n.func).__name__)
-        elif isinstance(n,ast.Constant) and type(n.value) not in (str,int,bool,bytes,type(None)):
+        elif isinstance(n,ast.Constant) and (type(n.value) not in (str,int,float,bool,bytes,type(None))
+                                            or (type(n.value) is float and not isfinite(n.value))):
             issue(n,'literal_denied')
     return issues
 

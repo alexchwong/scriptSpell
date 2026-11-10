@@ -28,7 +28,12 @@
     "stages/python": "stages/python.md",
     "stages/correction": "stages/correction.md",
     "stages/repair": "stages/repair.md",
-    "shared/task": "shared/task.md"
+    "shared/task": "shared/task.md",
+    "stages/yaml-examples": "stages/yaml-examples.md",
+    "stages/yaml-one-shot": "stages/yaml-one-shot.md",
+    "stages/yaml-python": "stages/yaml-python.md",
+    "stages/yaml-retry": "stages/yaml-retry.md",
+    "shared/yaml-contract": "shared/yaml-contract.md"
   },
   "presets": [
     {

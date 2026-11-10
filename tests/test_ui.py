@@ -197,3 +197,60 @@ def test_one_shot_paste_uses_proposal_validation_without_model_call(server, monk
                  example_input={'n': 7}, expected_output={'out': 7})
     status, view = request(server, '/api/generate', dict(body, reply=json.dumps(reply)))
     assert status == 200 and view['revision']['action'] == 'paste'
+
+
+def test_yaml_ui_previews_retries_pastes_and_invalidates_working_python(server, monkeypatch):
+    import modelspell
+
+    yaml_examples = """interface:
+  inputs: [{value: float}]
+  outputs: [{out: float}]
+examples:
+  - inputs: [{value: 0.1}]
+    outputs: [{out: 0.3}]
+  - inputs: [{value: 198.25}]
+    outputs: [{out: 198.45}]
+"""
+    rejected = 'interface: [\n'
+    calls = []
+    replies = iter([rejected, yaml_examples])
+
+    def complete(endpoint, model, messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(text=next(replies), finish_reason='stop', truncated=False)
+
+    monkeypatch.setattr(modelspell, 'complete', complete)
+    body = dict(mode='two-call', stage='examples', instruction='Add 0.2', example_count=2,
+                model='test/model', revision_id=None)
+    status, preview = request(server, '/api/authoring-preview', body)
+    assert status == 200 and preview['schema'] is None
+    status, data = request(server, '/api/stage', body)
+    assert status == 200 and data['retry_issues'] and len(calls) == 2
+    assert [message.content for message in calls[0]] == [preview['full_system'], preview['user']]
+    assert calls[1][1].content.endswith(rejected)
+    python_body = dict(body, stage='python', stage_token=data['stage_token'])
+    status, preview = request(server, '/api/authoring-preview', python_body)
+    assert status == 200 and '198.25' not in preview['system']
+    code = 'def transform(inputs):\n    return {"out": inputs["value"] + 0.2}'
+    status, data = request(server, '/api/stage', dict(python_body, reply=code))
+    assert status == 200 and data['completed_revision']
+    revision = data['active_id']
+    status, view = request(server, '/api/run', {'revision_id': revision})
+    assert status == 200
+    cases = view['revision']['draft']['examples']
+    assert [case['visible'] for case in cases] == [True, False]
+    assert [case['result']['status'] for case in cases] == ['pass', 'pass']
+
+    edited = dict(body, revision_id=revision, stage_token=data['stage_token'])
+    status, error = request(server, '/api/stage', dict(edited, reply=rejected))
+    assert status == 400 and error['details']['issues'] and len(calls) == 2
+    status, replaced = request(server, '/api/stage', dict(edited, reply=yaml_examples))
+    assert status == 200 and replaced['completed_revision'] is None
+    assert request(server, '/api/authoring-preview', python_body)[1]['error'] == 'stale_stage'
+    assert request(server, '/api/revision', {'revision_id': revision})[0] == 200
+
+    one_shot = yaml_examples + 'source: |\n' + ''.join('  ' + line + '\n' for line in code.splitlines())
+    status, data = request(server, '/api/stage', dict(body, mode='one-shot-yaml', stage='one-shot',
+                                                     revision_id=revision, reply=one_shot))
+    assert status == 200 and len(calls) == 2
+    assert all(case['visible'] for case in data['revision']['draft']['examples'])

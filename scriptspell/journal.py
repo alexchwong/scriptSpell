@@ -12,7 +12,7 @@ from uuid import uuid4
 from .codec import pack, unpack
 from .profile import Limits
 from .workflow import (AuthoringError, _guidance, correct_expected, edit_example, generate_draft,
-                       improve_python, run_examples, validate_model_settings)
+                       improve_python, json_display_value, run_examples, validate_model_settings)
 
 
 def _now():
@@ -63,7 +63,7 @@ def _atomic_json(path, document):
     try:
         with NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as stream:
             temporary = Path(stream.name)
-            json.dump(document, stream, ensure_ascii=True, allow_nan=False)
+            json.dump(document, stream, ensure_ascii=True, allow_nan=False, default=json_display_value)
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(path)
@@ -175,13 +175,13 @@ class AuthoringSession:
                 generate_draft(dispatch, settings, instruction, **options), None))
             return self._data['attempts'][attempt_id]['accepted_revision_id']
 
-    def record_authored(self, revision_id, draft, *, staged=False, settings=None):
+    def record_authored(self, revision_id, draft, *, staged=False, settings=None, action=None):
         """Store a draft already validated by an authoring workflow."""
         with self._lock:
             self._check_active(revision_id)
             data = deepcopy(self._data)
             active = self._record_revision(data, deepcopy(draft),
-                                           'staged' if staged else 'paste', settings=settings)
+                                           action or ('staged' if staged else 'paste'), settings=settings)
             self._write(data)
             return active
 

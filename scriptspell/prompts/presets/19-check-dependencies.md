@@ -4,6 +4,14 @@
 
 Report ready tasks given completed IDs and separately report unknown dependency IDs. Preserve task order.
 
+Input
+
+An ordered list of tasks with unique IDs and dependency IDs, plus the IDs of completed tasks.
+
+Expected output
+
+Ready task IDs in task order, excluding completed tasks. A task is ready if every dependency is known and completed. Report unknown dependency IDs separately, once each in first-seen order.
+
 ## Medium guidance
 
 Build lookups for known task IDs and completed IDs, then inspect each task’s dependencies.

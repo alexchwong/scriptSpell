@@ -1,6 +1,7 @@
 """Provider-neutral authoring operations for a multi-example draft."""
 import json
 import logging
+from math import isclose
 import re
 from copy import deepcopy
 from decimal import Decimal
@@ -62,17 +63,20 @@ def same_value(actual, expected):
         return actual.keys() == expected.keys() and all(same_value(v, expected[k]) for k, v in actual.items())
     if type(actual) is list:
         return len(actual) == len(expected) and all(same_value(a, b) for a, b in zip(actual, expected))
+    if type(actual) is float:
+        return isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12)
     return actual == expected
+
+
+def json_display_value(value):
+    if type(value) is Decimal:
+        return {'$decimal': str(value)}
+    raise TypeError('unsupported_display_value')
 
 
 def display_json(value):
     # Used only for display; comparisons use the original typed Monty values.
-    def encode(value):
-        if type(value) is Decimal:
-            return {'$decimal': str(value)}
-        raise TypeError('unsupported_display_value')
-
-    return json.dumps(value, indent=2, ensure_ascii=True, allow_nan=False, default=encode)
+    return json.dumps(value, indent=2, ensure_ascii=True, allow_nan=False, default=json_display_value)
 
 
 def validate_model_settings(model, *, temperature=None, reasoning=None, max_tokens=None):
@@ -88,7 +92,7 @@ def validate_model_settings(model, *, temperature=None, reasoning=None, max_toke
 
 
 def _materials(system, context, schema):
-    user = json.dumps(context, ensure_ascii=True, allow_nan=False)
+    user = json.dumps(context, ensure_ascii=True, allow_nan=False, default=json_display_value)
     if len(user) > 4194304:
         raise AuthoringError('authoring_limit')
     return dict(prompt_version=1, system=system, user=user, response_schema=schema)
@@ -253,6 +257,8 @@ def _check_pair(case, output_names, *, path='$'):
 
 def edit_example(draft, example_id, inputs, expected):
     """Return a draft with one example replaced and the same named output contract."""
+    if 'yaml_examples' in draft:
+        raise AuthoringError('edit_yaml_examples')
     candidate = deepcopy(draft)
     case = _example(candidate, example_id)
     replacement = dict(example_input=inputs, expected_output=expected)
@@ -294,6 +300,8 @@ def _guidance(guidance, *, required=False):
 
 def correct_expected(dispatch, settings, draft, example_id, guidance):
     """Propose a replacement expectation without running or changing the current draft."""
+    if 'yaml_examples' in draft:
+        raise AuthoringError('edit_yaml_examples')
     case = _example(draft, example_id)
     materials = _materials(
         render('stages/correction'),

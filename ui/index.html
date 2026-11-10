@@ -52,15 +52,19 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 <div><label for="maxTokens">Max output tokens</label><input id="maxTokens" type="number" min="1" step="1" placeholder="Provider default"></div>
 </div>
 <div class="grid">
-<div><label for="mode">Authoring mode</label><select id="mode"><option value="one-shot">One-shot</option><option value="staged">Staged</option></select></div>
+<div><label for="mode">Authoring mode</label><select id="mode"><option value="two-call">Two-call YAML</option><option value="one-shot-yaml">One-shot YAML</option><option value="legacy-json">Compatibility JSON</option></select></div>
 <div id="stageInterface" hidden><label for="interface">Interface JSON (optional)</label><textarea id="interface" placeholder='{"inputs":{"records":"array"},"outputs":{"result":"array"}}'></textarea></div>
 </div>
 <div id="stageControls" hidden class="actions">
-<button data-stage="inputs">1. Inputs</button>
-<button data-stage="expectations">2. Expected outputs</button>
-<button data-stage="python">3. Python</button>
+<button data-stage="examples">1. Examples and expectations</button>
+<button data-stage="python">2. Python</button>
 </div>
-<details id="accepted" hidden><summary>Accepted stage data</summary><pre id="acceptedText"></pre></details>
+<details id="accepted" hidden><summary>Review or replace examples YAML</summary>
+<label for="acceptedText">Interface, inputs and expected outputs</label>
+<textarea id="acceptedText" spellcheck="false"></textarea>
+<div class="actions"><button id="replaceYaml">Accept edited YAML</button><small>After an edit, generate Python from the accepted examples.</small></div>
+</details>
+<details id="yamlRetry" hidden><summary>Issues found in first reply</summary><pre id="yamlRetryIssues"></pre></details>
 <div class="actions"><button id="preview">Preview prompt</button><button id="generate" class="primary">Generate</button><small id="requestNote"></small></div>
 <div id="promptPreview" hidden>
 <div class="grid">
@@ -79,7 +83,7 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 <div id="status" role="status" aria-live="polite"></div>
 <section id="draft" hidden>
 <div class="section-title"><h2 id="draftTitle">Draft</h2><button id="copy">Copy Python</button></div>
-<div id="details"></div><pre id="source" tabindex="0" aria-label="Revision Python"></pre>
+<div id="details"></div><details id="savedYaml" hidden><summary>Saved examples YAML</summary><pre id="savedYamlText"></pre></details><pre id="source" tabindex="0" aria-label="Revision Python"></pre>
 <div class="actions"><button id="run" class="primary">Run examples</button><button id="export">Save Python</button><small id="testStatus"></small></div>
 </section>
 <section id="suite" hidden><h2>Examples</h2><div id="cases"></div>
@@ -119,29 +123,31 @@ fieldset{border:0;padding:0;margin:0;min-width:0}
 const $=id=>document.getElementById(id);
 const token=new URLSearchParams(location.search).get('t')||'';
 let busy=false, models=[], presets=[], snapshot={}, selectedAttempt=null, editing=null;
-let stage='inputs', stageToken=null, hasInputs=false, hasOutputs=false, stagedRevision=null, prompt=null;
-const stageLabels={inputs:'inputs',expectations:'expected outputs',python:'Python'};
-const staged=()=>$('mode').value==='staged';
-const stageReady=name=>name==='inputs'||(name==='expectations'?hasInputs:hasOutputs);
+let stage='examples', stageToken=null, hasInputs=false, stagedRevision=null, prompt=null;
+const stageLabels={examples:'examples and expectations',python:'Python','one-shot':'examples and Python'};
+const staged=()=>$('mode').value!=='legacy-json';
+const twoCall=()=>$('mode').value==='two-call';
+const stageReady=name=>name!=='python'||hasInputs;
 const draftShown=()=>!!snapshot.revision&&(!staged()||stagedRevision===snapshot.revision.id||!isActive());
 function clearPrompt(){
  prompt=null;$('promptPreview').hidden=true;$('pastedReply').value='';
 }
 function resetStages(){
- stage='inputs';stageToken=null;hasInputs=hasOutputs=false;stagedRevision=null;
- $('accepted').hidden=true;$('acceptedText').textContent='';
+ stage=twoCall()?'examples':'one-shot';stageToken=null;hasInputs=false;stagedRevision=null;
+ $('accepted').hidden=$('yamlRetry').hidden=true;$('acceptedText').value='';
  $('editor').hidden=$('review').hidden=true;
  clearPrompt();controls();
 }
 function authoringBody(){
  const body={instruction:$('instruction').value,example_count:number('count')};
- if(staged())Object.assign(body,{stage,stage_token:stageToken,interface_text:$('interface').value});
+ if(staged())Object.assign(body,{mode:$('mode').value,stage,stage_token:stageToken,interface_text:$('interface').value});
  return body;
 }
 
 function message(text,error=false){
  $('status').textContent=text;
  $('status').className=error?'error':'';
+ $('status').style.whiteSpace='pre-wrap';
 }
 function option(value,text){
  const element=document.createElement('option');
@@ -156,14 +162,14 @@ function controls(){
  const hasModel=!!$('model').value;
  $('difficulty').disabled=$('preset').value==='';
  const ready=$('instruction').value.trim()&&(!staged()||stageReady(stage));
- $('stageControls').hidden=$('stageInterface').hidden=!staged();
+ $('stageControls').hidden=!twoCall();$('stageInterface').hidden=!staged();
  $('accepted').hidden=!staged()||!hasInputs;
  for(const button of $('stageControls').querySelectorAll('button')){
   button.disabled=!stageReady(button.dataset.stage);
   button.setAttribute('aria-pressed',String(button.dataset.stage===stage));
  }
  $('generate').textContent=staged()?'Generate '+stageLabels[stage]:'Generate';
- $('requestNote').textContent=staged()?'One request for the selected stage.':'Generation can make a second request after a format error.';
+ $('requestNote').textContent=staged()&&stage==='python'?'One request for Python.':'Generation can make a second request after a format error.';
  $('generate').disabled=!hasModel||!ready;
  $('preview').disabled=!ready;
  $('acceptReply').disabled=!ready||!$('pastedReply').value.trim();
@@ -184,8 +190,10 @@ async function api(path,body){
  const response=await fetch(path,options);
  const value=await response.json();
  if(!response.ok){
-  const details=value.details&&Object.keys(value.details).length?' · '+JSON.stringify(value.details):'';
-  throw Error((value.error||'request_failed')+details);
+  const details=value.details||{};
+  const issues=(details.issues||[]).map(issue=>typeof issue==='string'?issue:JSON.stringify(issue));
+  const first=(details.first_attempt||[]).map(issue=>'First reply: '+issue);
+  throw Error([value.error||'request_failed',...first,...issues].join('\n'));
  }
  return value;
 }
@@ -237,7 +245,7 @@ function resultText(result){
  if(result.status==='error')return 'Execution error · '+result.outcome;
  return result.status==='pass'?'Pass':'Mismatch';
 }
-function showCase(container,example,index,{editable=false,regression=false}={}){
+function showCase(container,example,index,{editable=false,regression=false,allowEdit=true}={}){
  const card=node('div','','case');
  const header=node('div','','section-title');
  const title=node('h3','Example '+(index+1)+(example.visible===true?' · Visible to coder':example.visible===false?' · Held back':'')+' · '+resultText(example.result)+(regression?' · Regression':''),
@@ -257,7 +265,7 @@ function showCase(container,example,index,{editable=false,regression=false}={}){
    $('editInput').value=example.input_json;$('editExpected').value=example.expected_json;$('correctionGuide').value='';
    $('editor').scrollIntoView({block:'nearest'});controls();
   };
-  actions.append(edit);header.append(actions);
+  if(allowEdit)actions.append(edit);header.append(actions);
  }
  const details=node('details','');
  details.append(node('summary','Input JSON'),node('pre',example.input_json));
@@ -288,9 +296,11 @@ function render(data){
   if(!isActive())notes.push('Instruction · '+draft.instruction);
   $('details').textContent=notes.join('\n');
   $('source').textContent=draft.source;
+  $('savedYaml').hidden=!draft.yaml_examples;
+  $('savedYamlText').textContent=draft.yaml_examples||'';
   $('testStatus').textContent='Test status · '+summary.test_status;
   $('cases').replaceChildren();
-  draft.examples.forEach((ex,index)=>showCase($('cases'),ex,index,{editable:isActive()}));
+  draft.examples.forEach((ex,index)=>showCase($('cases'),ex,index,{editable:isActive(),allowEdit:!draft.yaml_examples}));
  }
  controls();
 }
@@ -344,7 +354,7 @@ function applyPreset(){
  resetStages();
 }
 $('preset').onchange=$('difficulty').onchange=applyPreset;
-$('mode').onchange=()=>{clearPrompt();controls();};
+$('mode').onchange=resetStages;
 $('pastedReply').oninput=controls;
 for(const button of $('stageControls').querySelectorAll('button')){
  button.onclick=()=>{
@@ -361,6 +371,15 @@ $('preview').onclick=()=>action('Preview prompt',async()=>{
 });
 $('copySystem').onclick=()=>action('Copy system prompt',()=>navigator.clipboard.writeText(prompt.full_system));
 $('copyUser').onclick=()=>action('Copy user prompt',()=>navigator.clipboard.writeText(prompt.user));
+function renderStage(response,nextStage){
+ stageToken=response.stage_token;hasInputs=response.has_inputs;stagedRevision=response.completed_revision;
+ $('acceptedText').value=response.accepted_text;
+ const issues=response.retry_issues||[];
+ $('yamlRetry').hidden=!issues.length;
+ $('yamlRetryIssues').textContent=issues.join('\\n');
+ stage=nextStage;
+ clearPrompt();render(response);
+}
 async function submitAuthoring(paste){
  const body=authoringBody();
  if(paste)body.reply=$('pastedReply').value;
@@ -371,13 +390,15 @@ async function submitAuthoring(paste){
  }
  if(!paste)await saveKey();
  const response=await api('/api/stage',{revision_id:snapshot.active_id,...(paste?{}:settings()),...body});
- stageToken=response.stage_token;hasInputs=response.has_inputs;hasOutputs=response.has_outputs;
- stagedRevision=response.completed_revision;
- $('accepted').hidden=false;$('acceptedText').textContent=response.accepted_text;
- if(stage==='inputs')stage='expectations';
- else if(stage==='expectations')stage='python';
- clearPrompt();render(response);
+ renderStage(response,stage==='examples'?'python':stage);
 }
+$('replaceYaml').onclick=()=>action('Accept edited YAML',async()=>{
+ const body=authoringBody();
+ const response=await api('/api/stage',{...body,mode:'two-call',stage:'examples',
+  stage_token:twoCall()?stageToken:null,revision_id:snapshot.active_id,reply:$('acceptedText').value});
+ $('mode').value='two-call';
+ renderStage(response,'python');
+});
 $('generate').onclick=()=>action('Generate',()=>submitAuthoring(false));
 $('acceptReply').onclick=()=>action('Accept reply',()=>submitAuthoring(true));
 $('run').onclick=()=>action('Run examples',()=>update('/api/run'));
@@ -407,6 +428,7 @@ action('Load playground',async()=>{
  const data=await api('/api/state');presets=data.presets;
  $('preset').append(...presets.map(([name],i)=>option(String(i),String(i+1).padStart(2,'0')+' · '+name)));
  $('keyState').textContent=data.key_set?'API key available for this session.':'Keys stay in memory. No API key set.';
+ stagedRevision=data.active_id;
  render(data);
 });
 </script></body></html>

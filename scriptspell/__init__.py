@@ -9,7 +9,10 @@ from .workflow import (
     run_examples, validate_model_settings,
 )
 
+from .yaml_authoring import YamlAuthoring
+
 __all__ = [
+    "YamlAuthoring",
     'Limits', 'profile', 'validate_source', 'run', 'prepare_authoring', 'validate_proposal',
     'AuthoringError', 'AuthoringSession', 'correct_expected', 'edit_example', 'generate_draft',
     'improve_python', 'run_examples', 'validate_model_settings',

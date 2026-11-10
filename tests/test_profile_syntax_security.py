@@ -56,7 +56,7 @@ def test_trusted_builtin_shadowing_rejected():
  'def transform(inputs):\n    return {"out": globals()}',
  'def transform(inputs):\n    return {"out": getattr(inputs,"x")}',
  'def transform(inputs):\n    return {"out": type(inputs)}',
- 'def transform(inputs):\n    return {"out": 1/2}',
+ 'def transform(inputs):\n    return {"out": 1**2}',
  'def transform(inputs):\n    return {"out": 2**-1}',
  'def transform(inputs):\n    return {"out": inputs.__class__}',
 ])

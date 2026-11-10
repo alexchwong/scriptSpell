@@ -1,0 +1,26 @@
+- interface must contain exactly two keys, inputs and outputs. Each must be a one-dimensional list of single-entry mappings from variable name to data type.
+- Adopt any input or output parameters specified by the user. Preserve their names, types, structure, and constraints. Infer reasonable choices only for unspecified details.
+- Express each type as a YAML string, such as str, int, bool, float, Decimal, None, list[str], or dict[str, float]. Plain list and dict allow heterogeneous values. Use a union such as str | None when appropriate.
+- Use finite numbers. For Decimal, quote the exact decimal text, such as "0.125". For float, use a floating-point YAML value such as 1.25 or 1.0. Use lowercase true, false and null. Quote strings that look like numbers, booleans or null.
+- examples must be a list of exactly the number requested. If the number is missing, assume one.
+- Each example must contain exactly two keys, inputs and outputs. Each contains a list of single-entry mappings from variable name to value.
+- Include every declared variable exactly once on its respective side. Values must match their declared types, and outputs must be correct for the corresponding inputs.
+- Generate varied, plausible cases. Include a representative case and, when requesting more than one, exercise distinct task-relevant edge cases where possible. Vary behavior, not just names or numbers. Keep structure and types consistent across cases.
+- Use plain YAML data without tags, anchors, aliases or merge keys. Return only the YAML document, without Markdown fences or commentary.
+
+Example interface and examples for doubling an integer with two requested pairs:
+
+interface:
+  inputs:
+    - number: int
+  outputs:
+    - result: int
+examples:
+  - inputs:
+      - number: 3
+    outputs:
+      - result: 6
+  - inputs:
+      - number: -2
+    outputs:
+      - result: -4

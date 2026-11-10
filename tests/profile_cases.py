@@ -15,6 +15,7 @@ BUILTIN_CASES = {'ArithmeticError': ('isinstance(ArithmeticError("x"), Exception
  'TimeoutError': ('isinstance(TimeoutError("x"), Exception)', True),
  'TypeError': ('isinstance(TypeError("x"), Exception)', True),
  'ValueError': ('isinstance(ValueError("x"), Exception)', True),
+ 'float': ('float("1.25")', 1.25),
  'ZeroDivisionError': ('isinstance(ZeroDivisionError("x"), Exception)', True),
  'abs': ('abs(-2)', 2),
  'all': ('all([True,True])', True),

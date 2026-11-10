@@ -101,21 +101,27 @@ guidance in the preset files and reusable instructions in the stage or shared
 templates. Template placeholders use `${name}`. The Monty profile is injected
 from the runtime. Package the catalog with the wheel.
 
-The playground offers One-shot and Staged authoring. Select a stage and preview
-its System and User messages before sending. Copy the full System message to
-include the response schema when one applies. Paste a model reply to validate it
-locally without making an API call. In Staged mode, replacing inputs discards
-the working expectations and Python. Replacing expectations discards the
-working Python. Completed drafts are journaled as revisions. In-progress stage
-data is held in the browser session on the local server.
+The playground defaults to Two-call YAML and also offers One-shot YAML and
+Compatibility JSON. Preserve the legacy JSON workflow for callers and the legacy
+benchmark. Both YAML modes share the same validator. Report all verifiable
+contract errors after a successful parse. When parsing fails, report the
+available syntax diagnostics. The model-only retry is capped at one and carries
+the exact rejected reply. Use the existing Monty source and execution paths
+after YAML acceptance.
 
-The render-only CLI uses the same message formatting:
+Preview System and User messages before sending. Copy the full System message
+to include a response schema when one applies. The render-only CLI uses the
+same message formatting:
 
-```sh
-python -m scripts.render_authoring_prompt --task 02 --stage inputs --examples 3 --role user
-python -m scripts.render_authoring_prompt --task 02 --stage expectations --inputs inputs.json --role system
-python -m scripts.render_authoring_prompt --task 02 --stage python --inputs inputs.json --expected-outputs expected.json
-```
+\`\`\`sh
+python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage examples --examples 3 --role system
+python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage python --examples 3 --examples-yaml examples.yaml
+python -m scripts.render_authoring_prompt --task 02 --mode one-shot-yaml --stage one-shot
+\`\`\`
+
+The staged benchmark accepts \`--mode two-call\` and \`--mode one-shot-yaml\`.
+Keep live runs opt-in. Check the per-stage diagnostics, valid-draft marker,
+execution marker, and case results separately.
 
 Match the preset, difficulty, example count, and optional interface across stages.
 Copy System and User messages separately when the target chat supports both roles.

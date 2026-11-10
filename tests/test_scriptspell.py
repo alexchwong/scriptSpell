@@ -11,7 +11,7 @@ from scriptspell import Limits, profile, run, validate_source
 
 def src(expr): return 'def transform(inputs):\n    return {"out": ' + expr + '}'
 
-@pytest.mark.parametrize('value', [None, False, 0, '', 'é🙂', '<deeply nested>', '[...]', 2**80,
+@pytest.mark.parametrize('value', [None, False, 0, '', 'é🙂', '<deeply nested>', '[...]', 2**80, 1.25, {"nested": [-0.0, 1e-200]},
     Decimal('1.20'), Decimal('-0.00'), Decimal('1E-900'), {'a': [1, None, False]}])
 def test_roundtrip(value):
     r = run(src('inputs["x"]'), {'x': value}, ['out'])
@@ -19,7 +19,7 @@ def test_roundtrip(value):
     assert r['values']['out'] == value
     if isinstance(value, Decimal): assert r['values']['out'].as_tuple() == value.as_tuple()
 
-@pytest.mark.parametrize('expr', ['transform', '(1, 2)', 'range(3)', '{1: "x"}', 'Decimal("NaN")'])
+@pytest.mark.parametrize('expr', ['transform', '(1, 2)', 'range(3)', '{1: "x"}', 'Decimal("NaN")', 'float("inf")', 'float("nan")'])
 def test_unsupported_results(expr):
     r = run('from decimal import Decimal\n' + src(expr), {}, ['out'])
     assert r['outcome'] != 'ok'
@@ -30,8 +30,7 @@ def test_unsupported_results(expr):
     'def transform(inputs):\n    return {"out": open("/etc/passwd").read()}',
     'def transform(inputs):\n    return {"out": eval("1")}',
     'def transform(inputs):\n    return {"out": inputs.__class__}',
-    'def transform(inputs):\n    return {"out": 0.1}',
-    'def transform(inputs):\n    return {"out": 1 / 3}',
+    'def transform(inputs):\n    return {"out": 1e309}',
     'def transform(inputs):\n    print(inputs)\n    return {"out": 1}',
     'def transform(inputs):\n    _ss_inputs = 1\n    return {"out": 1}',
     'def transform(inputs):\n    len = 1\n    return {"out": 1}',
@@ -76,7 +75,7 @@ def test_input_immutability_and_freshness():
     assert data == {'x': [1]}
     assert run(src('inputs["x"]'), data, ['out'])['values'] == {'out': [1]}
 
-@pytest.mark.parametrize('value', [1.2, float('nan'), Decimal('Infinity'), object(), {1: 2}])
+@pytest.mark.parametrize('value', [float('inf'), float('nan'), Decimal('Infinity'), object(), {1: 2}])
 def test_invalid_inputs(value):
     assert run(src('1'), {'x': value}, ['out'])['outcome'] == 'invalid_inputs'
 

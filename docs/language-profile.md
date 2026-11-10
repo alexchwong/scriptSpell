@@ -1,6 +1,6 @@
 # scriptSpell language profile
 
-Profile: **scriptspell-pure-v3**. Runtime: **pydantic-monty/client/runtime 1.5.0**.
+Profile: **scriptspell-pure-v4**. Runtime: **pydantic-monty/client/runtime 1.5.0**.
 
 ## Scope
 
@@ -14,7 +14,7 @@ functions and closures, lambda, literal and computed function defaults, annotati
 
 Additional details: module-level imports and function declarations only; nested helper functions and closures; helper parameters may have defaults, annotations, positional/keyword and variadic forms. The entry point remains exactly transform(inputs). Data-only match patterns include mappings, sequences, OR/as patterns and guards; class patterns are excluded. Regular private names and the throwaway underscore are allowed. The _ss_ namespace and double-underscore names are reserved. Builtins cannot be rebound.
 
-Classes, decorators, with, async, yield, deletion, namespace mutation, reflection, dynamic evaluation, host access and clock reads are excluded. Floats, complex values, true division and powers remain outside the exact-value policy. Decimal context changes are unavailable.
+Classes, decorators, with, async, yield, deletion, namespace mutation, reflection, dynamic evaluation, host access and clock reads are excluded. Complex values and powers are unavailable. Finite floats and true division are supported. Decimal context changes are unavailable.
 
 ## Caveats
 
@@ -26,7 +26,7 @@ Classes, decorators, with, async, yield, deletion, namespace mutation, reflectio
 - CSV readers require direct calls and no **kwargs. Quoting must be default or a literal/string-preserving mode 0/1/3 (or the qualified approved constants); keyword unpacking and QUOTE_NONNUMERIC are excluded.
 - bytes(iterable_of_ints) is unsupported; use text.encode, bytes(text, encoding), bytes(existing_bytes) or bytes(length).
 - Regex: finditer is eager and ASCII flags have no effect. Callable replacement functions, Pattern positional range arguments, Match.expand/lastindex/lastgroup and re.subn are unavailable. Engine and replacement-template behaviour differ from CPython, so do not use re.ASCII as an ASCII-only guarantee; use explicit ASCII character classes instead.
-- True division, powers and binary floating point are outside this exact-value profile.
+- Binary floats use ordinary rounding. True division and float conversion are supported. Only finite floats can cross the runtime boundary.
 - Decimal arithmetic uses precision 128 and traps Rounded/Inexact.
 - Sets have Monty-specific ordering; do not rely on CPython set iteration order. Introspection, identity and hash functions are intentionally excluded.
 
@@ -63,7 +63,7 @@ Some names failed initially only because the probe used the wrong receiver. as_i
 | `base64` | `b64encode`, `b64decode`, `standard_b64encode`, `standard_b64decode`, `urlsafe_b64encode`, `urlsafe_b64decode`, `b32encode`, `b32decode`, `b16encode`, `b16decode`, `b85encode`, `b85decode`, `a85encode`, `a85decode` |
 | `csv` | `reader`, `DictReader`, `QUOTE_MINIMAL`, `QUOTE_ALL`, `QUOTE_NONE` |
 
-Use import module [as alias] or from module import approved_member [as alias]. No wildcard or relative imports. Other modules are rejected. JSON/TOML parsing is deferred because default parsers introduce floats; parse exact values in the consumer. No runtime download or host import fallback is provided.
+Use import module [as alias] or from module import approved_member [as alias]. No wildcard or relative imports. Other modules are rejected. Parse structured input in the consumer and choose integer or Decimal values when exact arithmetic matters. No runtime download or host import fallback is provided.
 
 ## Builtins and tested examples
 

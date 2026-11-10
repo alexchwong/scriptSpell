@@ -2,9 +2,9 @@ from dataclasses import dataclass, asdict
 from importlib.metadata import version, PackageNotFoundError
 
 from ._version import __version__ as VERSION
-PROFILE = 'scriptspell-pure-v3'
+PROFILE = 'scriptspell-pure-v4'
 # Pure builtins only: no host I/O, dynamic evaluation or namespace reflection.
-BUILTINS = frozenset('ArithmeticError AssertionError Exception IndexError KeyError LookupError MemoryError OverflowError RecursionError RuntimeError StopIteration TimeoutError TypeError ValueError ZeroDivisionError abs all any bin bool bytes chr dict divmod enumerate filter format frozenset hex int isinstance iter len list map max min next oct ord range repr reversed round set slice sorted str sum tuple zip'.split())
+BUILTINS = frozenset('ArithmeticError AssertionError Exception IndexError KeyError LookupError MemoryError OverflowError RecursionError RuntimeError StopIteration TimeoutError TypeError ValueError ZeroDivisionError abs all any bin bool bytes chr dict divmod enumerate filter float format frozenset hex int isinstance iter len list map max min next oct ord range repr reversed round set slice sorted str sum tuple zip'.split())
 IMPORTS = {
     'decimal': ('Decimal', 'InvalidOperation', 'DivisionByZero', 'Inexact', 'Rounded'),
     're': ('compile', 'escape', 'search', 'match', 'fullmatch', 'split', 'findall', 'finditer', 'sub', 'I', 'IGNORECASE', 'M', 'MULTILINE', 'S', 'DOTALL', 'A', 'ASCII', 'NOFLAG', 'error'),
@@ -26,7 +26,7 @@ DATA_METHODS = DATA_METHODS | frozenset('search match fullmatch findall finditer
 METHODS = DATA_METHODS | frozenset('encode decode hex fromhex digest hexdigest digest_size block_size'.split())
 METHODS = DATA_METHODS  # Legacy API field; module members are separate in IMPORTS.
 FORBIDDEN_NAMES = frozenset(('eval exec compile globals locals vars dir getattr setattr delattr hasattr type id hash '
-    'open print input breakpoint help object super float complex bytearray memoryview __import__').split())
+    'open print input breakpoint help object super complex bytearray memoryview __import__').split())
 # An explicitly imported re.compile is allowed; bare compile remains unavailable.
 RESERVED_NAMES = BUILTINS | FORBIDDEN_NAMES | {'Decimal'}
 
@@ -58,14 +58,14 @@ def profile():
             packages[name] = version(name)
         except PackageNotFoundError:
             packages[name] = None
-    return dict(version=VERSION, profile=PROFILE, codec=1, packages=packages,
+    return dict(version=VERSION, profile=PROFILE, codec=2, packages=packages,
                 limits=asdict(Limits()), builtins=sorted(BUILTINS), methods=sorted(METHODS),
                 validation='static_only', decimal_precision=128,
                 imports={k:list(v) for k,v in IMPORTS.items()}, data_attributes=sorted(DATA_METHODS),
                 syntax=['functions and closures','lambda','literal and computed function defaults','annotations',
                         'loops and conditions','assignment expressions','data-only structural matching','try/except/else/finally','assert','f-strings',
                         'list/dict/set comprehensions','eager generator expressions','starred unpacking','integer bit operations'],
-                output_types=['dict[str, value]','list','str','bool','int','finite Decimal','None'],
+                output_types=['dict[str, value]','list','str','bool','int','finite float','finite Decimal','None'],
                 caveats=['Internal bytes, tuples, sets, iterators, dates and specialised containers must be converted before return.',
                          'Generator expressions are eagerly materialised by Monty.',
                          'Builtin methods must be called directly, not passed as callbacks.',
@@ -73,5 +73,5 @@ def profile():
                          'CSV readers require direct calls, no **kwargs, and default/string-preserving quoting modes 0/1/3.',
                          'bytes(iterable_of_ints) is unsupported; use text.encode, bytes(text, encoding), bytes(existing_bytes) or bytes(length).',
                          'Regex finditer is eager, ASCII flags have no effect, and CPython replacement/engine semantics differ; see docs/language-profile.md.',
-                         'True division, powers and binary floating point are outside this exact-value profile.',
+                         'Finite binary floats and true division are supported. Powers are unavailable.',
                          'Decimal arithmetic uses precision 128 and traps Rounded/Inexact.'])

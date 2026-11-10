@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 import modelspell
-from scriptspell import AuthoringSession, validate_model_settings
+from scriptspell import AuthoringSession, YamlAuthoring, validate_model_settings
 from scriptspell.staged import StagedAuthoring
 from scriptspell.workflow import accept_generation_reply, generation_preview
 from . import service
@@ -125,7 +125,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, dict(error=exc.code, details=getattr(exc, 'details', {})))
         except modelspell.ModelSpellError as exc:
             # Class names give useful failure categories without echoing credentials or prompts.
-            self.send(502, {'error': type(exc).__name__})
+            error = {'error': type(exc).__name__}
+            if hasattr(exc, 'authoring_first_attempt'):
+                error['details'] = {'first_attempt': exc.authoring_first_attempt}
+            self.send(502, error)
         except RuntimeError:
             self.send(503, {'error': 'cleanup_failed'})
         except OSError:
@@ -139,16 +142,24 @@ class Handler(BaseHTTPRequestHandler):
         server = self.server
         stage = body.get('stage')
         token = body.get('stage_token')
-        if token is None and stage == 'inputs':
+        mode = body.get('mode')
+        yaml_mode = mode in ('two-call', 'one-shot-yaml')
+        initial_stage = 'one-shot' if mode == 'one-shot-yaml' else ('examples' if yaml_mode else 'inputs')
+        if token is None and stage == initial_stage:
             interface = body.get('interface_text', '')
             if type(interface) is not str:
                 raise service.UIError('invalid_interface')
-            return StagedAuthoring(body.get('instruction'), body.get('example_count', 1),
-                                   service.parse_json(interface) if interface.strip() else None)
+            interface = service.parse_json(interface) if interface.strip() else None
+            if yaml_mode:
+                return YamlAuthoring(body.get('instruction'), body.get('example_count', 1),
+                                     interface=interface, one_shot=mode == 'one-shot-yaml')
+            return StagedAuthoring(body.get('instruction'), body.get('example_count', 1), interface)
         if server.staged is None or token != server.stage_token:
             raise service.UIError('stale_stage')
         flow = server.staged
-        if flow.instruction != body.get('instruction') or flow.count != body.get('example_count'):
+        if (flow.instruction != body.get('instruction') or flow.count != body.get('example_count')
+                or isinstance(flow, YamlAuthoring) != yaml_mode
+                or (yaml_mode and flow.one_shot != (mode == 'one-shot-yaml'))):
             raise service.UIError('stale_stage')
         return flow
 
@@ -185,23 +196,41 @@ class Handler(BaseHTTPRequestHandler):
             stage = body.get('stage')
             materials = flow.materials(stage)
             settings = None
+            retry_issues = []
+            yaml_mode = isinstance(flow, YamlAuthoring)
             if 'reply' in body:
-                reply = body['reply']
+                flow.accept(stage, body['reply'])
             else:
                 settings = validate_model_settings(**service.settings(body))
                 s.model_cancel = modelspell.CancelHandle()
                 if s.closing:
                     s.model_cancel.cancel()
-                response = service.dispatch(s.endpoint(), s.model_cancel, s.models)(materials, dict(settings))
-                if response.truncated or response.finish_reason != 'stop':
-                    raise service.UIError('incomplete_model_response')
-                reply = response.text
-            flow.accept(stage, reply)
+                send = service.dispatch(s.endpoint(), s.model_cancel, s.models)
+                if yaml_mode:
+                    try:
+                        flow.generate(stage, send, settings, on_reject=retry_issues.extend)
+                    except modelspell.ModelSpellError as exc:
+                        if retry_issues:
+                            exc.authoring_first_attempt = retry_issues
+                        raise
+                else:
+                    response = send(materials, dict(settings))
+                    if response.truncated or response.finish_reason != 'stop':
+                        raise service.UIError('incomplete_model_response')
+                    flow.accept(stage, response.text)
             completed_revision = None
-            if stage == 'python':
-                completed_revision = session.record_authored(revision_id, flow.draft(), staged=True, settings=settings)
+            if stage in ('python', 'one-shot'):
+                completed_revision = session.record_authored(
+                    revision_id, flow.draft(), staged=True, settings=settings,
+                    action=body.get('mode') if yaml_mode else None)
             s.staged = flow
             s.stage_token = secrets.token_urlsafe(16)
+            if yaml_mode:
+                ready = flow.document is not None
+                accepted = flow.examples_yaml() if ready else ''
+                return self.send(200, dict(service.view(session), stage_token=s.stage_token,
+                                           completed_revision=completed_revision, has_inputs=ready,
+                                           has_outputs=ready, accepted_text=accepted, retry_issues=retry_issues))
             return self.send(200, dict(service.view(session), stage_token=s.stage_token,
                                        completed_revision=completed_revision,
                                        has_inputs=flow.inputs is not None, has_outputs=flow.outputs is not None,

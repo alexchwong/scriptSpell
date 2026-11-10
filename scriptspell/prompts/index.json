@@ -1,0 +1,135 @@
+{
+  "difficulty_sections": {
+    "easy": [
+      "Task",
+      "Medium guidance",
+      "Easy guidance"
+    ],
+    "medium": [
+      "Task",
+      "Medium guidance"
+    ],
+    "hard": [
+      "Task"
+    ]
+  },
+  "default_difficulty": "medium",
+  "templates": {
+    "shared/monty": "shared/monty.md",
+    "shared/proposal_examples": "shared/proposal_examples.md",
+    "one-shot/single": "one-shot/single.md",
+    "one-shot/multiple": "one-shot/multiple.md",
+    "one-shot/retry": "one-shot/retry.md",
+    "one-shot/retry-single": "one-shot/retry-single.md",
+    "one-shot/retry-multiple": "one-shot/retry-multiple.md",
+    "shared/json": "shared/json.md",
+    "stages/inputs": "stages/inputs.md",
+    "stages/expectations": "stages/expectations.md",
+    "stages/python": "stages/python.md",
+    "stages/correction": "stages/correction.md",
+    "stages/repair": "stages/repair.md",
+    "shared/task": "shared/task.md"
+  },
+  "presets": [
+    {
+      "id": "01",
+      "title": "Normalize labels",
+      "file": "presets/01-normalize-labels.md"
+    },
+    {
+      "id": "02",
+      "title": "Stable deduplication",
+      "file": "presets/02-stable-deduplication.md"
+    },
+    {
+      "id": "03",
+      "title": "Summarize transactions",
+      "file": "presets/03-summarize-transactions.md"
+    },
+    {
+      "id": "04",
+      "title": "Rank stock levels",
+      "file": "presets/04-rank-stock-levels.md"
+    },
+    {
+      "id": "05",
+      "title": "Classify thresholds",
+      "file": "presets/05-classify-thresholds.md"
+    },
+    {
+      "id": "06",
+      "title": "Parse key-value text",
+      "file": "presets/06-parse-key-value-text.md"
+    },
+    {
+      "id": "07",
+      "title": "Validate records",
+      "file": "presets/07-validate-records.md"
+    },
+    {
+      "id": "08",
+      "title": "Flatten nested records",
+      "file": "presets/08-flatten-nested-records.md"
+    },
+    {
+      "id": "09",
+      "title": "Join records",
+      "file": "presets/09-join-records.md"
+    },
+    {
+      "id": "10",
+      "title": "Compare inventories",
+      "file": "presets/10-compare-inventories.md"
+    },
+    {
+      "id": "11",
+      "title": "Pivot observations",
+      "file": "presets/11-pivot-observations.md"
+    },
+    {
+      "id": "12",
+      "title": "Merge intervals",
+      "file": "presets/12-merge-intervals.md"
+    },
+    {
+      "id": "13",
+      "title": "Rolling averages",
+      "file": "presets/13-rolling-averages.md"
+    },
+    {
+      "id": "14",
+      "title": "Reconcile payments",
+      "file": "presets/14-reconcile-payments.md"
+    },
+    {
+      "id": "15",
+      "title": "Summarize events",
+      "file": "presets/15-summarize-events.md"
+    },
+    {
+      "id": "16",
+      "title": "Reinsert placeholders",
+      "file": "presets/16-reinsert-placeholders.md"
+    },
+    {
+      "id": "17",
+      "title": "Validate report fields",
+      "file": "presets/17-validate-report-fields.md"
+    },
+    {
+      "id": "18",
+      "title": "Resolve configuration",
+      "file": "presets/18-resolve-configuration.md"
+    },
+    {
+      "id": "19",
+      "title": "Check dependencies",
+      "file": "presets/19-check-dependencies.md"
+    },
+    {
+      "id": "20",
+      "title": "Allocate quantities",
+      "file": "presets/20-allocate-quantities.md"
+    }
+  ]
+}

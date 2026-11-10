@@ -86,14 +86,91 @@ A static `ok` means the proposal passed shape and source policy checks; it does 
 requirements and assumptions, runs the proposed example and independent synthetic test cases
 through `run`, validates contracts and expected results, and decides whether to save the source.
 
-For a repair, call `prepare_authoring` again with the same task/interface and approved
-`diagnostics`. The application owns the retry budget and the data sent to the model.
+The low-level helpers also accept caller-approved `diagnostics` for another request.
+Use the revision workflow below for dedicated repair and expectation correction.
+The application owns the request budget and the data sent to the model.
 Context arguments must be JSON serializable. For exact Decimal examples, use an explicit
 text representation and describe its type; do not convert precise numbers to floats.
 
 [examples/application_adapter.py](examples/application_adapter.py) demonstrates this full
 flow with an offline model stand-in. [The integration guide](docs/application-integration.md)
 describes model dispatch, runtime outcomes, cancellation and AgentWiz responsibilities.
+
+## Authoring workflow and local playground
+
+The revision workflow uses a caller-supplied `dispatch(materials, settings)` function.
+Send the system/user messages and response schema from `materials` using your provider
+adapter. Return an object with `text`, `finish_reason` and `truncated` attributes, such
+as a modelSpell completion result. scriptSpell itself needs no API key or model provider.
+Settings are `model` plus optional `temperature` (0–2), `reasoning` (off, low, medium,
+or high), and `max_tokens` (positive integer). Omitted settings use provider defaults.
+The journal records requested settings. Provider application of those settings is unverified.
+
+```python
+from scriptspell import AuthoringSession
+
+session = AuthoringSession("runs")
+settings = {"model": "provider/model", "max_tokens": 4096}
+revision = session.generate(None, dispatch, settings, "Trim text.", example_count=3)
+reports = session.run(revision)
+failed = [r["example_id"] for r in reports if r["status"] == "mismatch"]
+if failed:
+    attempt_id = session.improve(revision, dispatch, settings, failed)
+    candidate = session.attempt(attempt_id)
+    # After reviewing the candidate and its full suite results:
+    # revision = session.decide(revision, attempt_id, True)
+print(session.export(revision))
+```
+
+Generation requests Python and all 1–20 examples together, with one retry for a format error. Use `examples=[{"inputs":
+..., "outputs": ...}]` for structured examples the workflow can verify against the
+response. Supplied parts are preserved by value and incomplete pairs can be filled.
+Examples embedded in prose rely on the model's interpretation. Expected outputs are
+named objects, with `null` valid as a field value. Comparison is type-exact, ignores
+object key order and preserves list order. Actual values appear only after successful
+execution, and failure evidence can be sent to the model only by an explicit repair.
+
+`session.correct(revision, dispatch, settings, example_id, guidance)` proposes one new
+expected output. `session.decide(revision, attempt_id, True)` accepts it and reruns
+the suite. Repair runs its candidate suite before acceptance and records regressions
+against the preceding run. Passing, failing and rejected candidates can be inspected in
+history. Use `session.edit` for a manual example edit, `session.snapshot` to inspect a
+revision, and `session.restore(active_revision, selected_revision)` to create a fresh,
+untested revision from a prior snapshot. Model proposals are bound to the active revision.
+
+In a checkout with the development extra installed, run `python -m ui`. Use an OpenRouter
+key from the environment or enter it in the page, load models and choose a preset or
+enter an instruction. Presets offer easy, medium and hard guidance for the same task. Generate, review the examples, then run them. Use **Edit / correct**
+to change a saved example or request a proposed expectation, or select failing cases
+and use **Improve Python** to propose new code. **Save Python** exports the selected revision.
+
+Each launch starts a new session. Its local `runs/<session-id>/journal.json` contains
+drafts, attempts and test results. Exports use
+`runs/<session-id>/<revision-id>/<export-id>/script.py` with adjacent `metadata.json`
+recording revision and test status. OpenRouter credentials stay in memory. Use synthetic
+data because model requests send task material to OpenRouter and the journal retains it.
+
+To test the same presets in a batch, run from the checkout with the development extra
+installed and `OPENROUTER_API_KEY` set in your environment.
+
+```sh
+python -m scripts.check_authoring_presets --list
+python -m scripts.check_authoring_presets --difficulty all --dry-run
+python -m scripts.check_authoring_presets --task 02 --model qwen/qwen3-coder-next --examples 3
+python -m scripts.check_authoring_presets
+```
+
+The default batch runs 20 medium presets and generates three examples per proposal.
+Generation retries a format error once, for up to 40 requests by default.
+`--difficulty all` runs 60 variants, for up to 120 requests. Set temperature,
+reasoning, token cap, timeout and report path with `--temperature`, `--reasoning`,
+`--max-tokens`, `--timeout`, and `--report`. The default report is
+`reports/authoring_presets.json`. Exit codes are 0 for PASS, 1 for FAIL, and 2 for BLOCKED.
+A blocked provider or runtime stops the batch. A pass measures whether the generated
+Python matches the model-generated expectations. The report includes both values, plus each attempt's prompt, raw reply, finish
+metadata, and validation details. Rejected source includes any validator issues
+with line numbers. Review the report before sharing because it contains prompt
+and model content.
 
 ## Public API
 
@@ -104,6 +181,11 @@ Import from `scriptspell`; underscore modules and codec details are private.
 | `__version__` | Installed library version; independent of the language/profile identifier. |
 | `profile()` | Fresh capability dictionary: profile, codec, dependency versions, limits and vocabulary. |
 | `prepare_authoring(task, interface=None, examples=(), diagnostics=None)` | Versioned prompts/schema requiring code and examples together; no dispatch or source execution. |
+| `generate_draft(dispatch, settings, instruction, …)` | One request for a draft with stable example IDs. |
+| `run_examples(draft, *, cancel=None)` | Local Monty suite with typed expected/actual values and per-case status. |
+| `correct_expected(…)`, `improve_python(…)`, `edit_example(…)` | Return revised drafts. Python repair also returns full candidate results. |
+| `AuthoringSession(root="runs")` | Serialize revision edits, track model attempts and test results, and export Python. |
+| `validate_model_settings(model, …)` | Validate provider-neutral authoring controls before dispatch. |
 | `validate_proposal(proposal)` | Check proposal shape and source policy; returns an outcome dictionary. |
 | `validate_source(source)` | Static source-policy check; no submitted code execution. |
 | `run(source, inputs, output_names, *, limits=None, cancel=None)` | Synchronous invocation; accepted `values` exist only on `ok`. |

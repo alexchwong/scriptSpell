@@ -13,86 +13,400 @@ input,select,textarea{width:100%;font:inherit;padding:10px 12px;border:1px solid
 textarea{resize:vertical;line-height:1.5;min-height:120px}textarea.json{font:13px/1.5 ui-monospace,monospace;min-height:190px}
 input:focus,select:focus,textarea:focus{outline:2px solid #2e7787;outline-offset:1px}
 button{font:inherit;border:1px solid #bdcbd2;border-radius:6px;padding:10px 16px;background:white;color:#193849;cursor:pointer;white-space:nowrap}
-button.primary{background:#14596b;color:white;border-color:#14596b}button:disabled{opacity:.5;cursor:default}
+button.primary{background:#14596b;color:white;border-color:#14596b}button:disabled,fieldset:disabled button{opacity:.5;cursor:default}
 .row{display:flex;gap:10px;align-items:end}.row>div{flex:1;min-width:0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .actions{display:flex;align-items:center;gap:14px;margin-top:14px}.muted,small{color:#617383;font-size:13px}.note{margin:12px 0 0;line-height:1.5}
 pre{font:13px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7f9;padding:15px;border-radius:6px;margin:0;max-height:430px;overflow:auto;min-height:80px}
-#status{margin:14px 0;min-height:22px}#status.error{color:#a82c36}#verdict{font-weight:600;margin:0 0 12px;min-height:22px}
-#result.match{border-color:#3a9364}#result.match #verdict{color:#237747}#result.mismatch{border-color:#c69a2f}#result.mismatch #verdict{color:#856000}#result.error{border-color:#c85a63}#result.error #verdict{color:#a82c36}
+#status{margin:14px 0;min-height:22px}
 #details{white-space:pre-wrap;font-size:13px;line-height:1.5;margin-top:12px}.section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.section-title h2{margin:0}
 @media(max-width:700px){main{margin:22px auto;padding:0 14px 30px}.grid{grid-template-columns:1fr}.row{flex-wrap:wrap}.row>div{flex-basis:100%}header{display:block}header span{display:block;margin-top:6px}}
+fieldset{border:0;padding:0;margin:0;min-width:0}
+.settings{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:16px}
+.case{padding:14px 0;border-top:1px solid #dce3e8}.case h3{font-size:15px;margin:0}.case .grid{margin-top:10px}
+.case input[type=checkbox]{width:auto;margin:0 8px 0 0}.case label{display:inline;font-weight:400}
+.pass{color:#237747}.mismatch{color:#856000}.error{color:#a82c36}
+[hidden]{display:none!important}.actions{flex-wrap:wrap}
+@media(max-width:700px){.settings{grid-template-columns:1fr 1fr}}
 </style>
 </head>
-<body><main>
+<body><main><fieldset id="workspace">
 <header><h1>scriptSpell</h1><span>Developer playground</span></header>
 <section aria-labelledby="connection-title"><h2 id="connection-title">OpenRouter connection</h2>
 <div class="row"><div><label for="key">API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste a key, or use OPENROUTER_API_KEY"></div><button id="saveKey">Use key</button><button id="load">Load models</button></div>
 <p id="keyState" class="muted">Keys are held in memory for this session.</p>
 <div class="grid"><div><label for="search">Find a model</label><input id="search" type="search" placeholder="Search model name or ID"></div><div><label for="model">Model</label><select id="model"><option value="">Load models to select one</option></select></div></div>
 </section>
-<section><label for="instruction">Instructions</label><textarea id="instruction" placeholder="Describe the transformation. Include example input and expected output if you have them; otherwise they will be generated."></textarea>
-<div class="actions"><button id="generate" class="primary">Generate</button><small>One paid request · up to 4,096 output tokens · no automatic execution</small></div>
-<p class="note muted">Instructions and any examples you include are sent to OpenRouter. Use synthetic data.</p></section>
+<section>
+<div class="grid">
+<div><label for="preset">Instruction preset</label><select id="preset"><option value="">Custom instruction</option></select></div>
+<div><label for="difficulty">Prompt difficulty</label><select id="difficulty" disabled>
+<option value="easy">Easy · more guidance</option><option value="medium" selected>Medium</option><option value="hard">Hard · minimal guidance</option>
+</select></div>
+</div>
+<label for="instruction" style="margin-top:14px">Instructions</label>
+<textarea id="instruction" placeholder="Describe the transformation. Include any examples you want preserved."></textarea>
+<div class="grid settings">
+<div><label for="count">Examples</label><input id="count" type="number" min="1" max="20" step="1" value="1"></div>
+<div><label for="temperature">Temperature</label><input id="temperature" type="number" min="0" max="2" step="any" placeholder="Provider default"></div>
+<div><label for="reasoning">Reasoning level</label><select id="reasoning"><option value="">Provider default</option><option>off</option><option>low</option><option>medium</option><option>high</option></select></div>
+<div><label for="maxTokens">Max output tokens</label><input id="maxTokens" type="number" min="1" step="1" placeholder="Provider default"></div>
+</div>
+<div class="grid">
+<div><label for="mode">Authoring mode</label><select id="mode"><option value="one-shot">One-shot</option><option value="staged">Staged</option></select></div>
+<div id="stageInterface" hidden><label for="interface">Interface JSON (optional)</label><textarea id="interface" placeholder='{"inputs":{"records":"array"},"outputs":{"result":"array"}}'></textarea></div>
+</div>
+<div id="stageControls" hidden class="actions">
+<button data-stage="inputs">1. Inputs</button>
+<button data-stage="expectations">2. Expected outputs</button>
+<button data-stage="python">3. Python</button>
+</div>
+<details id="accepted" hidden><summary>Accepted stage data</summary><pre id="acceptedText"></pre></details>
+<div class="actions"><button id="preview">Preview prompt</button><button id="generate" class="primary">Generate</button><small id="requestNote"></small></div>
+<div id="promptPreview" hidden>
+<div class="grid">
+<div><div class="section-title"><h2>System prompt</h2><button id="copySystem">Copy full system</button></div><pre id="systemPrompt" tabindex="0"></pre></div>
+<div><div class="section-title"><h2>User prompt</h2><button id="copyUser">Copy user</button></div><pre id="userPrompt" tabindex="0"></pre></div>
+</div>
+<details id="responseSchema" hidden><summary>Response schema · included in full system copy</summary><pre id="schemaText"></pre></details>
+</div>
+<details><summary>Paste a model reply</summary>
+<label for="pastedReply">Reply for the selected stage or one-shot draft</label>
+<textarea id="pastedReply" spellcheck="false"></textarea>
+<button id="acceptReply">Validate and accept reply</button>
+</details>
+<p class="note muted">Use synthetic data. Model actions send instructions and relevant examples or code to OpenRouter.</p>
+</section>
 <div id="status" role="status" aria-live="polite"></div>
-<section><div class="grid"><div><label for="input">Example input</label><textarea id="input" class="json" spellcheck="false" disabled></textarea></div><div><label for="expected">Expected output</label><textarea id="expected" class="json" spellcheck="false" disabled></textarea></div></div>
-<p class="note muted">Edit either JSON object to test another case. Use strings for decimals. Keys can be reordered; array order and value types must match.</p></section>
-<section><div class="section-title"><h2>Generated Python</h2><button id="copy" disabled>Copy code</button></div><pre id="source" tabindex="0" aria-label="Generated Python, read only">Generate a transformation to see its code.</pre><div id="details"></div>
-<div class="actions"><button id="run" class="primary" disabled>Run Python</button><small>Runs locally in scriptSpell’s restricted Monty runtime.</small></div></section>
-<section id="result"><h2>Actual output</h2><p id="verdict" role="status" aria-live="polite">No result yet</p><pre id="actual"></pre><p class="note muted">A match against a model-generated example is a starting point. Review the code and try independent examples.</p></section>
-</main>
+<section id="draft" hidden>
+<div class="section-title"><h2 id="draftTitle">Draft</h2><button id="copy">Copy Python</button></div>
+<div id="details"></div><pre id="source" tabindex="0" aria-label="Revision Python"></pre>
+<div class="actions"><button id="run" class="primary">Run examples</button><button id="export">Save Python</button><small id="testStatus"></small></div>
+</section>
+<section id="suite" hidden><h2>Examples</h2><div id="cases"></div>
+<div id="repairBox">
+<label for="repairGuide">Python repair guidance (optional)</label>
+<textarea id="repairGuide" placeholder="Explain the intended behavior or add constraints."></textarea>
+<div class="actions"><button id="improve">Improve Python for selected failures</button></div>
+</div>
+</section>
+<section id="editor" hidden>
+<h2 id="editTitle">Edit or correct an example</h2>
+<div class="grid">
+<div><label for="editInput">Input JSON</label><textarea id="editInput" class="json" spellcheck="false"></textarea></div>
+<div><label for="editExpected">Expected output JSON</label><textarea id="editExpected" class="json" spellcheck="false"></textarea></div>
+</div>
+<div class="actions"><button id="saveEdit">Save example edit</button><small>Use named output objects and strings for decimals.</small></div>
+<label for="correctionGuide" style="margin-top:14px">Expected output correction guidance</label>
+<textarea id="correctionGuide" placeholder="Explain what the expectation should account for."></textarea>
+<div class="actions"><button id="correct">Propose corrected expectation</button><small>Uses the saved input and expectation.</small></div>
+</section>
+<section id="review" hidden><h2 id="reviewTitle">Review attempt</h2><p id="attemptInfo"></p>
+<div id="comparison" class="grid" hidden>
+<div><h2>Previous expected</h2><pre id="oldExpected"></pre></div>
+<div><h2>Proposed expected</h2><pre id="newExpected"></pre></div>
+</div>
+<pre id="candidateSource" hidden></pre><div id="candidateCases"></div>
+<div class="actions"><button id="accept" class="primary">Accept</button><button id="reject">Reject</button></div>
+</section>
+<section id="history" hidden><h2>History</h2>
+<div class="row"><div><label for="revisions">Revisions</label><select id="revisions"></select></div>
+<button id="restore">Restore selected</button></div>
+<div class="row" style="margin-top:14px"><div><label for="attempts">Model attempts</label><select id="attempts"></select></div></div>
+</section>
+</fieldset></main>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
 const token=new URLSearchParams(location.search).get('t')||'';
-// The per-launch token is never stored in browser storage or sent in referrers.
-let busy=false, generated=false, runnable=false, models=[], proposalId=null, formatting=Promise.resolve();
-function state(){
- for(const id of ['saveKey','load','generate','key','instruction','search','model']) $(id).disabled=busy;
- $('generate').disabled=busy||!$('model').value||!$('instruction').value.trim();
- for(const id of ['input','expected']) $(id).disabled=busy||!generated;
- $('run').disabled=busy||!runnable; $('copy').disabled=busy||!generated;
+let busy=false, models=[], presets=[], snapshot={}, selectedAttempt=null, editing=null;
+let stage='inputs', stageToken=null, hasInputs=false, hasOutputs=false, stagedRevision=null, prompt=null;
+const stageLabels={inputs:'inputs',expectations:'expected outputs',python:'Python'};
+const staged=()=>$('mode').value==='staged';
+const stageReady=name=>name==='inputs'||(name==='expectations'?hasInputs:hasOutputs);
+const draftShown=()=>!!snapshot.revision&&(!staged()||stagedRevision===snapshot.revision.id||!isActive());
+function clearPrompt(){
+ prompt=null;$('promptPreview').hidden=true;$('pastedReply').value='';
 }
-function message(text,error=false){$('status').textContent=text;$('status').className=error?'error':'';}
-function stale(){ $('result').className='';$('verdict').textContent='Result out of date — run again';$('actual').textContent=''; }
+function resetStages(){
+ stage='inputs';stageToken=null;hasInputs=hasOutputs=false;stagedRevision=null;
+ $('accepted').hidden=true;$('acceptedText').textContent='';
+ $('editor').hidden=$('review').hidden=true;
+ clearPrompt();controls();
+}
+function authoringBody(){
+ const body={instruction:$('instruction').value,example_count:number('count')};
+ if(staged())Object.assign(body,{stage,stage_token:stageToken,interface_text:$('interface').value});
+ return body;
+}
+
+function message(text,error=false){
+ $('status').textContent=text;
+ $('status').className=error?'error':'';
+}
+function option(value,text){
+ const element=document.createElement('option');
+ element.value=value; element.textContent=text;
+ return element;
+}
+function isActive(){return !!snapshot.revision && snapshot.revision.id===snapshot.active_id;}
+function canRun(){return draftShown() && isActive() && !snapshot.revision.draft.unmet_requirements.length;}
+function chosenFailures(){return [...$('cases').querySelectorAll('input:checked')].map(input=>input.value);}
+function controls(){
+ $('workspace').disabled=busy;
+ const hasModel=!!$('model').value;
+ $('difficulty').disabled=$('preset').value==='';
+ const ready=$('instruction').value.trim()&&(!staged()||stageReady(stage));
+ $('stageControls').hidden=$('stageInterface').hidden=!staged();
+ $('accepted').hidden=!staged()||!hasInputs;
+ for(const button of $('stageControls').querySelectorAll('button')){
+  button.disabled=!stageReady(button.dataset.stage);
+  button.setAttribute('aria-pressed',String(button.dataset.stage===stage));
+ }
+ $('generate').textContent=staged()?'Generate '+stageLabels[stage]:'Generate';
+ $('requestNote').textContent=staged()?'One request for the selected stage.':'Generation can make a second request after a format error.';
+ $('generate').disabled=!hasModel||!ready;
+ $('preview').disabled=!ready;
+ $('acceptReply').disabled=!ready||!$('pastedReply').value.trim();
+ $('draft').hidden=$('suite').hidden=!draftShown();
+ $('run').disabled=!canRun();
+ $('correct').disabled=!canRun()||!hasModel||!$('correctionGuide').value.trim();
+ $('improve').disabled=!canRun()||!hasModel||!chosenFailures().length;
+ $('restore').disabled=!snapshot.revision||isActive();
+ $('repairBox').hidden=!canRun();
+ const pending=selectedAttempt?.status==='pending' && selectedAttempt.revision_id===snapshot.active_id;
+ $('accept').hidden=$('reject').hidden=!pending;
+}
 async function api(path,body){
  const options={headers:{'X-Session-Token':token}};
- if(body!==undefined){options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}
- const response=await fetch(path,options); const value=await response.json();
- if(!response.ok) throw Error(value.error||'request_failed');return value;
+ if(body!==undefined){
+  options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);
+ }
+ const response=await fetch(path,options);
+ const value=await response.json();
+ if(!response.ok){
+  const details=value.details&&Object.keys(value.details).length?' · '+JSON.stringify(value.details):'';
+  throw Error((value.error||'request_failed')+details);
+ }
+ return value;
 }
-async function action(fn){busy=true;state();message('Working…');try{await formatting;await fn();}catch(e){message(e.message,true);}finally{busy=false;state();}}
-async function saveKey(){const key=$('key').value;if(!key.trim())return;const data=await api('/api/key',{api_key:key});$('key').value='';$('keyState').textContent=data.key_set?'API key available for this session.':'No API key set.';}
-function filterModels(){const previous=$('model').value, q=$('search').value.toLowerCase();$('model').replaceChildren();
- const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Select a model';$('model').append(placeholder);
- for(const item of models.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(q))){const option=document.createElement('option');option.value=item.id;option.textContent=item.name?item.name+' — '+item.id:item.id;$('model').append(option);}
- if([...$('model').options].some(o=>o.value===previous))$('model').value=previous;state();}
-$('saveKey').onclick=()=>action(async()=>{await saveKey();message('Key updated.');});
-$('load').onclick=()=>action(async()=>{await saveKey();models=(await api('/api/models',{})).models;filterModels();message(models.length+' models loaded.');});
-$('search').oninput=filterModels;$('model').onchange=state;
-$('instruction').oninput=()=>{if(generated){runnable=false;stale();message('Instructions changed. Generate again to update the code.');}state();};
-$('generate').onclick=()=>action(async()=>{
- generated=false;runnable=false;proposalId=null;$('source').textContent='Generating…';$('details').textContent='';$('input').value='';$('expected').value='';stale();
- try{
- await saveKey();const p=await api('/api/generate',{model:$('model').value,instruction:$('instruction').value});
- proposalId=p.proposal_id;$('source').textContent=p.source;$('input').value=p.example_input_json;$('expected').value=p.expected_output_json;
- const notes=[p.summary,...p.assumptions.map(x=>'Assumption: '+x),...p.unmet_requirements.map(x=>'Unmet requirement: '+x)];$('details').textContent=notes.join('\n');
- generated=true;runnable=!p.unmet_requirements.length;message(runnable?'Generated. Review the example and code, then run.':'Generated with unmet requirements. Run is disabled.',!runnable);
- $('verdict').textContent='Ready to run';
- }catch(e){$('source').textContent='No accepted code. Update instructions or try again.';throw e;}
-});
-for(const id of ['input','expected']){
- $(id).oninput=stale;
- $(id).onblur=()=>{const original=$(id).value;formatting=formatting.then(async()=>{try{const data=await api('/api/format',{text:original});if($(id).value===original)$(id).value=data.text;}catch(e){message(id+': '+e.message,true);}});};
+async function action(label,fn){
+ if(busy)return;
+ busy=true;controls();message(label+'…');
+ try{message(await fn()||label+' complete.');}
+ catch(e){message(label+' failed · '+e.message,true);}
+ finally{busy=false;controls();}
 }
-$('run').onclick=()=>action(async()=>{
- stale();
- try{const result=await api('/api/run',{proposal_id:proposalId,input_json:$('input').value,expected_json:$('expected').value});
- $('result').className=result.status;$('actual').textContent=result.actual_json;
- $('verdict').textContent=result.status==='match'?'Match':result.status==='mismatch'?'Mismatch — actual output differs from expected':'Error — '+result.outcome;
- message('Run finished.');
- }catch(e){$('result').className='error';$('verdict').textContent='Error — '+e.message;throw e;}
+async function saveKey(){
+ const key=$('key').value;
+ if(!key.trim())return;
+ const result=await api('/api/key',{api_key:key});
+ $('key').value='';
+ $('keyState').textContent=result.key_set?'API key available for this session.':'No API key set.';
+}
+function filterModels(){
+ const previous=$('model').value, q=$('search').value.toLowerCase();
+ const shown=models.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(q));
+ $('model').replaceChildren(option('','Select a model'),...shown.map(m=>option(m.id,m.name?m.name+' — '+m.id:m.id)));
+ if(shown.some(m=>m.id===previous))$('model').value=previous;
+ controls();
+}
+function number(id){
+ const field=$(id);
+ if(field.value===''&&!field.validity.badInput)return null;
+ const value=field.valueAsNumber;
+ if(!Number.isFinite(value)||(field.step==='1'&&!Number.isSafeInteger(value)))
+  throw Error('Check '+field.labels[0].textContent.toLowerCase());
+ return value;
+}
+function settings(){
+ return {model:$('model').value,temperature:number('temperature'),reasoning:$('reasoning').value||null,max_tokens:number('maxTokens')};
+}
+function node(tag,text,cls){
+ const element=document.createElement(tag);
+ element.textContent=text;
+ if(cls)element.className=cls;
+ return element;
+}
+function pane(label,value){
+ const column=node('div','');
+ column.append(node('h2',label),node('pre',value));
+ return column;
+}
+function resultText(result){
+ if(!result)return 'Untested';
+ if(result.status==='error')return 'Execution error · '+result.outcome;
+ return result.status==='pass'?'Pass':'Mismatch';
+}
+function showCase(container,example,index,{editable=false,regression=false}={}){
+ const card=node('div','','case');
+ const header=node('div','','section-title');
+ const title=node('h3','Example '+(index+1)+(example.visible===true?' · Visible to coder':example.visible===false?' · Held back':'')+' · '+resultText(example.result)+(regression?' · Regression':''),
+                  example.result?.status);
+ header.append(title);
+ if(editable){
+  const actions=node('div','','');
+  if(example.result&&example.result.status!=='pass'&&example.result.outcome!=='cancelled'){
+   const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.value=example.id;
+   checkbox.onchange=controls;
+   const label=node('label','Include in repair');label.prepend(checkbox);actions.append(label);
+  }
+  const edit=node('button','Edit / correct');
+  edit.onclick=()=>{
+   editing=example.id;
+   $('editor').hidden=false;$('editTitle').textContent='Edit or correct example '+(index+1);
+   $('editInput').value=example.input_json;$('editExpected').value=example.expected_json;$('correctionGuide').value='';
+   $('editor').scrollIntoView({block:'nearest'});controls();
+  };
+  actions.append(edit);header.append(actions);
+ }
+ const details=node('details','');
+ details.append(node('summary','Input JSON'),node('pre',example.input_json));
+ const grid=node('div','','grid');
+ grid.append(pane('Expected',example.expected_json),pane('Actual',example.result?.actual_json??resultText(example.result)));
+ card.append(header,details,grid);container.append(card);
+}
+function render(data){
+ snapshot=data; selectedAttempt=null; editing=null;
+ $('editor').hidden=$('review').hidden=true;
+ const revision=data.revision;
+ $('draft').hidden=$('suite').hidden=!revision;
+ $('history').hidden=!data.revisions.length&&!data.attempts.length;
+ $('revisions').replaceChildren(...data.revisions.map((r,i)=>option(r.id,
+  (i+1)+' · '+r.action+' · '+r.test_status+(r.id===data.active_id?' · Active':''))).reverse());
+ $('attempts').replaceChildren(option('','Select an attempt'),...data.attempts.map((a,i)=>option(a.id,
+  (i+1)+' · '+a.action+' · '+a.status+(a.error?' · '+a.error:''))).reverse());
+ if(revision){
+  $('revisions').value=revision.id;
+  const {draft}=revision;
+  const summary=data.revisions.find(r=>r.id===revision.id);
+  $('draftTitle').textContent=isActive()?'Active draft':'Saved revision';
+  const requested=revision.requested_settings;
+  const notes=[draft.summary,...draft.assumptions.map(x=>'Assumption · '+x),...draft.unmet_requirements.map(x=>'Unmet · '+x)];
+  if(requested)notes.push('Requested · '+requested.model+' · temperature '+(requested.temperature??'default')+
+    ' · reasoning '+(requested.reasoning??'default')+' · max tokens '+(requested.max_tokens??'default'));
+  if(revision.guidance)notes.push('Guidance · '+revision.guidance);
+  if(!isActive())notes.push('Instruction · '+draft.instruction);
+  $('details').textContent=notes.join('\n');
+  $('source').textContent=draft.source;
+  $('testStatus').textContent='Test status · '+summary.test_status;
+  $('cases').replaceChildren();
+  draft.examples.forEach((ex,index)=>showCase($('cases'),ex,index,{editable:isActive()}));
+ }
+ controls();
+}
+function review(attempt){
+ selectedAttempt=attempt;$('review').hidden=false;$('attempts').value=attempt.id;
+ $('reviewTitle').textContent=attempt.action.replaceAll('_',' ')+' · '+attempt.status;
+ const requested=attempt.requested_settings;
+ const info=[attempt.error,attempt.guidance?'Guidance · '+attempt.guidance:null,attempt.timestamp,
+  requested?'Requested · '+requested.model+' · temperature '+(requested.temperature??'default')+
+    ' · reasoning '+(requested.reasoning??'default')+' · max tokens '+(requested.max_tokens??'default'):null];
+ if(attempt.regressions?.length)info.push(attempt.regressions.length+' regression(s) against the prior run');
+ $('attemptInfo').textContent=info.filter(Boolean).join(' · ');
+ $('comparison').hidden=true;$('candidateSource').hidden=true;$('candidateCases').replaceChildren();
+ if(attempt.candidate && attempt.action==='correct_expected'){
+  $('comparison').hidden=false;$('oldExpected').textContent=attempt.previous_expected_json;
+  $('newExpected').textContent=attempt.candidate.examples.find(ex=>ex.id===attempt.example_id).expected_json;
+ }else if(attempt.candidate){
+  $('candidateSource').hidden=false;$('candidateSource').textContent=attempt.candidate.source;
+  attempt.candidate.examples.forEach((ex,index)=>showCase($('candidateCases'),ex,index,
+    {regression:attempt.regressions?.includes(ex.id)}));
+ }
+ controls();$('review').scrollIntoView({block:'nearest'});
+}
+async function update(path,body={}){
+ const response=await api(path,{revision_id:snapshot.active_id,...body});
+ if(staged()&&stagedRevision===snapshot.active_id&&['/api/edit','/api/decide'].includes(path))
+  stagedRevision=response.active_id;
+ render(response);
+ if(response.attempt)review(response.attempt);
+}
+async function modelUpdate(path,body){
+ await saveKey();
+ try{await update(path,{...settings(),...body});}
+ catch(e){
+  // Refresh attempt history on failure while retaining the last active draft.
+  const state=await api('/api/state').catch(()=>null);
+  if(state)render(state);
+  throw e;
+ }
+}
+$('saveKey').onclick=()=>action('Use key',saveKey);
+$('load').onclick=()=>action('Load models',async()=>{
+ await saveKey();models=(await api('/api/models',{})).models;filterModels();
+ return models.length+' models loaded.';
 });
-$('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('source').textContent);message('Code copied.');}catch(e){message('Select and copy the code manually.',true);}};
-api('/api/state').then(s=>{$('keyState').textContent=s.key_set?'API key available for this session.':'Keys stay in memory. No API key set.';}).catch(e=>message(e.message,true));
-state();
+$('search').oninput=filterModels;$('model').onchange=controls;$('instruction').oninput=resetStages;$('count').oninput=resetStages;$('interface').oninput=resetStages;
+$('correctionGuide').oninput=controls;
+function applyPreset(){
+ const index=$('preset').value;
+ $('instruction').value=index===''?'':presets[Number(index)][1][$('difficulty').value];
+ resetStages();
+}
+$('preset').onchange=$('difficulty').onchange=applyPreset;
+$('mode').onchange=()=>{clearPrompt();controls();};
+$('pastedReply').oninput=controls;
+for(const button of $('stageControls').querySelectorAll('button')){
+ button.onclick=()=>{
+  stage=button.dataset.stage;clearPrompt();controls();
+ };
+}
+$('preview').onclick=()=>action('Preview prompt',async()=>{
+ prompt=await api('/api/authoring-preview',authoringBody());
+ $('systemPrompt').textContent=prompt.system;
+ $('userPrompt').textContent=prompt.user;
+ $('responseSchema').hidden=!prompt.schema;
+ $('schemaText').textContent=prompt.schema??'';
+ $('promptPreview').hidden=false;
+});
+$('copySystem').onclick=()=>action('Copy system prompt',()=>navigator.clipboard.writeText(prompt.full_system));
+$('copyUser').onclick=()=>action('Copy user prompt',()=>navigator.clipboard.writeText(prompt.user));
+async function submitAuthoring(paste){
+ const body=authoringBody();
+ if(paste)body.reply=$('pastedReply').value;
+ if(!staged()){
+  if(paste)await update('/api/generate',body);
+  else await modelUpdate('/api/generate',body);
+  clearPrompt();return;
+ }
+ if(!paste)await saveKey();
+ const response=await api('/api/stage',{revision_id:snapshot.active_id,...(paste?{}:settings()),...body});
+ stageToken=response.stage_token;hasInputs=response.has_inputs;hasOutputs=response.has_outputs;
+ stagedRevision=response.completed_revision;
+ $('accepted').hidden=false;$('acceptedText').textContent=response.accepted_text;
+ if(stage==='inputs')stage='expectations';
+ else if(stage==='expectations')stage='python';
+ clearPrompt();render(response);
+}
+$('generate').onclick=()=>action('Generate',()=>submitAuthoring(false));
+$('acceptReply').onclick=()=>action('Accept reply',()=>submitAuthoring(true));
+$('run').onclick=()=>action('Run examples',()=>update('/api/run'));
+$('saveEdit').onclick=()=>action('Save example edit',()=>update('/api/edit',
+ {example_id:editing,input_json:$('editInput').value,expected_json:$('editExpected').value}));
+$('correct').onclick=()=>action('Propose corrected expectation',()=>modelUpdate('/api/correct',
+ {example_id:editing,guidance:$('correctionGuide').value}));
+$('improve').onclick=()=>action('Improve Python',()=>modelUpdate('/api/improve',
+ {example_ids:chosenFailures(),guidance:$('repairGuide').value}));
+for(const [id,accept] of [['accept',true],['reject',false]]){
+ $(id).onclick=()=>action(accept?'Accept proposal':'Reject proposal',()=>update('/api/decide',
+  {attempt_id:selectedAttempt.id,accept}));
+}
+$('revisions').onchange=()=>action('Load revision',async()=>render(await api('/api/revision',
+ {revision_id:$('revisions').value})));
+$('attempts').onchange=()=>action('Load attempt',async()=>{
+ if($('attempts').value)review(await api('/api/attempt',{attempt_id:$('attempts').value}));
+ else{selectedAttempt=null;$('review').hidden=true;}
+});
+$('restore').onclick=()=>action('Restore revision',()=>update('/api/restore',{selected_id:snapshot.revision.id}));
+$('export').onclick=()=>action('Save Python',async()=>{
+ const saved=await api('/api/export',{revision_id:snapshot.revision.id});
+ return 'Saved '+saved.path+' ('+saved.test_status+').';
+});
+$('copy').onclick=()=>action('Copy Python',async()=>navigator.clipboard.writeText(snapshot.revision.draft.source));
+action('Load playground',async()=>{
+ const data=await api('/api/state');presets=data.presets;
+ $('preset').append(...presets.map(([name],i)=>option(String(i),String(i+1).padStart(2,'0')+' · '+name)));
+ $('keyState').textContent=data.key_set?'API key available for this session.':'Keys stay in memory. No API key set.';
+ render(data);
+});
 </script></body></html>

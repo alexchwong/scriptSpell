@@ -15,7 +15,7 @@ def test_every_advertised_name_has_a_probe():
     assert set(BUILTIN_CASES)==set(BUILTINS)
     assert set(METHOD_CASES)==set(DATA_METHODS)
     assert set(MODULE_CASES)=={(m,n) for m,names in IMPORTS.items() for n in names}
-    assert profile()['profile']=='scriptspell-pure-v4'
+    assert profile()['profile']=='scriptspell-pure-v5'
 
 @pytest.mark.parametrize('name',sorted(BUILTIN_CASES))
 def test_builtin(name):

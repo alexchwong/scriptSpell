@@ -194,7 +194,7 @@ reply, or `generate(stage, dispatch, settings)` to send it with retry handling.
 The stage names are `examples` and `python` for Two-call, or `one-shot` for
 One-shot. Once complete, call `draft()` and pass it to `run_examples(draft)`.
 An optional interface is an object with `inputs` and `outputs` dictionaries
-mapping names to types. The model-facing YAML uses lists of single-entry mappings.
+mapping names to types. New model-facing YAML uses mappings. Saved YAML using lists of single-entry mappings is still accepted.
 
 The YAML loader accepts one bounded document with string mapping keys and
 rejects duplicate keys, anchors, aliases, merge keys, and explicit tags.

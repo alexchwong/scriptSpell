@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 from importlib.metadata import version, PackageNotFoundError
 
 from ._version import __version__ as VERSION
-PROFILE = 'scriptspell-pure-v4'
+PROFILE = 'scriptspell-pure-v5'
 # Pure builtins only: no host I/O, dynamic evaluation or namespace reflection.
 BUILTINS = frozenset('ArithmeticError AssertionError Exception IndexError KeyError LookupError MemoryError OverflowError RecursionError RuntimeError StopIteration TimeoutError TypeError ValueError ZeroDivisionError abs all any bin bool bytes chr dict divmod enumerate filter float format frozenset hex int isinstance iter len list map max min next oct ord range repr reversed round set slice sorted str sum tuple zip'.split())
 IMPORTS = {

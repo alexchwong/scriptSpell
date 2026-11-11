@@ -1,6 +1,6 @@
 # scriptSpell language profile
 
-Profile: **scriptspell-pure-v4**. Runtime: **pydantic-monty/client/runtime 1.5.0**.
+Profile: **scriptspell-pure-v5**. Runtime: **pydantic-monty/client/runtime 1.5.0**.
 
 ## Scope
 
@@ -63,7 +63,7 @@ Some names failed initially only because the probe used the wrong receiver. as_i
 | `base64` | `b64encode`, `b64decode`, `standard_b64encode`, `standard_b64decode`, `urlsafe_b64encode`, `urlsafe_b64decode`, `b32encode`, `b32decode`, `b16encode`, `b16decode`, `b85encode`, `b85decode`, `a85encode`, `a85decode` |
 | `csv` | `reader`, `DictReader`, `QUOTE_MINIMAL`, `QUOTE_ALL`, `QUOTE_NONE` |
 
-Use import module [as alias] or from module import approved_member [as alias]. No wildcard or relative imports. Other modules are rejected. Parse structured input in the consumer and choose integer or Decimal values when exact arithmetic matters. No runtime download or host import fallback is provided.
+Use import module [as alias] or from module import approved_member [as alias]. No wildcard or relative imports. Approved modules and members are never implicit globals: `Decimal` must be imported with `from decimal import Decimal` (optionally `as` an alias) or used as `decimal.Decimal` after `import decimal`; bare unimported `Decimal` is rejected as an unknown name. Other modules are rejected. Parse structured input in the consumer and choose integer or Decimal values when exact arithmetic matters. No runtime download or host import fallback is provided.
 
 ## Builtins and tested examples
 
@@ -122,6 +122,8 @@ Use import module [as alias] or from module import approved_member [as alias]. N
 | `zip` | `[list(x) for x in zip([1],[2])]` |
 
 ## Data methods and attributes with tested receiver examples
+
+Expressions using bare `Decimal("2")` below assume `from decimal import Decimal`.
 
 This table identifies the tested receiver. A method existing for Decimal does not imply it exists for int, or for every other type. Other argument combinations may raise ordinary runtime errors. Do not infer unsupported overloads from a familiar CPython name.
 

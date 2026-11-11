@@ -161,7 +161,7 @@
         }
       }
     },
-    "guidance": "Check each order for id (nonempty str), quantity (positive int), and unit_price_cents (nonnegative int). Input orders may omit any of those fields or contain invalid values."
+    "guidance": "Check each order for id (nonempty str), quantity (positive int; zero is invalid), and unit_price_cents (nonnegative int; zero is valid). Input orders may omit any of those fields or contain invalid values. Report errors in input-record order and, within a record, in field order id, quantity, unit_price_cents."
   },
   "08": {
     "interface": {

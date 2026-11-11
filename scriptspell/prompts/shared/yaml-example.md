@@ -2,15 +2,15 @@ Example interface and examples for doubling an integer with two requested pairs:
 
 interface:
   inputs:
-    - number: int
+    number: int
   outputs:
-    - result: int
+    result: int
 examples:
   - inputs:
-      - number: 3
+      number: 3
     outputs:
-      - result: 6
+      result: 6
   - inputs:
-      - number: -2
+      number: -2
     outputs:
-      - result: -4
+      result: -4

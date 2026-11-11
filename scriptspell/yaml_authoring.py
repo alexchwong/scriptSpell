@@ -46,11 +46,9 @@ class YamlAuthoring:
             raise AuthoringError('stage_not_ready')
         user = task_text(self.instruction, example_count=self.count)
         if self.interface is not None and stage != 'python':
-            interface = {side: [{name: kind} for name, kind in fields.items()]
-                         for side, fields in self.interface.items()}
-            example = {side: [{name: f'<{kind} value>'} for name, kind in fields.items()]
+            example = {side: {name: f'<{kind} value>' for name, kind in fields.items()}
                        for side, fields in self.interface.items()}
-            shape = dump_examples(dict(interface=interface, examples=[example])).rstrip()
+            shape = dump_examples(dict(interface=self.interface, examples=[example])).rstrip()
             user += '\n\n' + render('stages/yaml-fixed-interface', shape=shape, count=self.count)
         if self.records:
             user += '\n\n' + _record_guidance(self.records)

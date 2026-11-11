@@ -10,7 +10,7 @@ Event records with categories, integer timestamps and severities, start and end 
 
 Expected output
 
-Per-category event counts and the highest-ranked severity present. Include timestamps at the start and exclude those at the end.
+Per-category event counts and the highest-ranked severity present, one entry per category with at least one event in the window, sorted by category. Include timestamps at the start and exclude those at the end.
 
 ## Medium guidance
 

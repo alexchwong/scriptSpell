@@ -10,7 +10,7 @@ A list of pairs of integer endpoints for half-open intervals. Empty and reversed
 
 Expected output
 
-A list of sorted merged endpoint pairs and a separate list of reversed pairs. Merge touching intervals and omit empty intervals.
+A list of sorted merged endpoint pairs and a separate list of reversed pairs in input order. Merge touching intervals and omit empty intervals.
 
 ## Medium guidance
 

@@ -197,12 +197,18 @@ def _keys(value, required, path, issues):
 def _variables(value, path, issues):
     if value is _INVALID:
         return None
-    if type(value) is not list:
-        issues.append(f'{path}: use a list of single-entry mappings.')
+    if type(value) not in (dict, list):
+        issues.append(f'{path}: use a mapping from variable name to type or value.')
         return None
     fields = {}
     if len(value) > 100:
         issues.append(f'{path}: declare at most 100 variables.')
+    if type(value) is dict:
+        for name in value:
+            if not name or len(name) > 128:
+                issues.append(f'{path}: use names between 1 and 128 characters.')
+        return value
+    # Earlier saved replies used lists of single-entry mappings.
     for index, item in enumerate(value, 1):
         if type(item) is not dict or len(item) != 1:
             issues.append(f'{path}[{index}]: provide exactly one variable name and value.')
@@ -259,7 +265,7 @@ def _record_rule(value, steps, rule, path, issues):
 
 
 def validate_examples(text, count, *, one_shot=False, interface=None, records=None):
-    """Return the original data document and normalised pairs, or all verifiable errors."""
+    """Return the canonical data document and normalised pairs, or all verifiable errors."""
     data, issues = read_yaml(text)
     document = _keys(data, ('interface', 'examples', 'source') if one_shot else
                      ('interface', 'examples'), '$', issues)
@@ -268,6 +274,7 @@ def validate_examples(text, count, *, one_shot=False, interface=None, records=No
     for side in ('inputs', 'outputs'):
         fields = _variables(declared[side], f'interface.{side}', issues) if side in declared else None
         if fields is not None:
+            declared[side] = fields
             if side == 'outputs' and not fields:
                 issues.append('interface.outputs: declare at least one output.')
             if interface is not None:
@@ -308,6 +315,7 @@ def validate_examples(text, count, *, one_shot=False, interface=None, records=No
                     fields = _variables(entry[side], location, issues) if side in entry else None
                     if fields is None:
                         continue
+                    entry[side] = fields
                     specs = contracts.get(side)
                     if specs is not None:
                         _keys(fields, specs, location, issues)

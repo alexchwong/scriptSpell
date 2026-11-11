@@ -72,18 +72,39 @@ larger runs. Two-call makes up to three requests per preset and One-shot up to
 two, including one possible YAML retry. The full 20-preset comparison therefore
 caps at 60 and 40 requests respectively.
 
-Exit code `0` means PASS, `1` means FAIL, and `2` means BLOCKED. A provider or
-runtime blocker can stop the batch. Check the completed preset count in the
-terminal alongside `tasks_requested` in the report.
+Exit code `0` means PASS, `1` means FAIL, `2` means BLOCKED, and `130` means
+interrupted. The legacy verdict measures model-expectation agreement. A fixed-case
+or reference failure appears separately in stdout and the report, and can coexist
+with exit 0. The summary lists unattempted tasks and each independent check.
 
-- Check `request_count` and `attempts` for the stages called, YAML retries,
-  validator diagnostics, and raw model replies.
-- Check `valid_draft`, `executed`, and `failed_stage` separately to distinguish
-  authoring failures from execution failures and output mismatches.
-- Compare `examples` and `held_back`. With three examples, Two-call shows the
-  first pair to the coder and runs it plus two held-back pairs. One-shot has no
-  held-back cases. A pass means the Python agrees with generated expectations.
-  Review the expected and actual values when they differ.
+- Check `request_count` for logical model calls, including YAML repairs.
+  With the current modelSpell pin, HTTP retry is disabled and each logical call
+  allows at most one HTTP attempt. The exact number of sends is unavailable.
+- Check `valid_draft`, `executed`, `failed_stage` and `attempts` for stage evidence.
+  Reports omit raw provider error bodies and redact the API key. Generated data,
+  prompts and replies can still be sensitive.
+- Check `verified` for hand-written fixed cases and `reference` for independently
+  scored generated inputs. The latter scores model expectations and Python
+  outputs separately, with visible and held-back cases marked individually.
+
+An isolated shared-pool 429, network failure, timeout or server error allows one
+next independent task after a short pause. Two consecutive transient blockers
+stop the run. Account or key limits, exhausted credits and invalid configuration
+stop it immediately.
+
+Resume a partial run with its original benchmark flags and a fresh report path:
+
+```sh
+python -m scripts.check_authoring_staged --mode two-call \
+  --model qwen/qwen3-coder-next --task 02 --difficulty easy --examples 3 \
+  --resume reports/yaml_two_call_smoke.json --report reports/yaml_two_call_resumed.json
+```
+
+A matching run preserves earlier PASS and FAIL results and reuses accepted
+two-call examples when only Python is pending. Reports without a matching source,
+prompt, contract and settings manifest remain readable. Use repeatable `--task`
+to rerun selected presets from those reports. Use `reports/` for checkpoints so
+they stay outside the implementation fingerprint.
 
 #### Check example structure before generating Python
 
@@ -104,13 +125,11 @@ before running it. Omit `--task` to run all 20. This check makes at most two
 requests per preset (40 across all 20), including the single YAML retry. It
 does not generate or run Python.
 
-In `examples_validation`, compare `first_pass_rate` with `final_pass_rate`.
-Both use the number of presets that reached the examples stage as denominator.
-Provider failures are marked BLOCKED and do not count as passes. The rates
-measure document structure, field names, and types. They do not measure whether
-the model calculated the expected values correctly. Each result contains
-`examples_first_pass`, `examples_valid`, and the prompts, replies and diagnostics
-under `attempts`.
+In `examples_validation`, each rate uses the number of replies evaluated at
+that point. A provider failure with no reply leaves that check unevaluated. If
+it happens during repair, the rejected first reply still counts. These rates
+measure structure, names and types. For independent correctness use the
+separate `reference` results when available.
 
 Use `--mode legacy-json` for the older three-call JSON benchmark. For a single
 preset and difficulty, `--interface FILE` supplies named input and output types

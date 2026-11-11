@@ -254,3 +254,25 @@ examples:
                                                      revision_id=revision, reply=one_shot))
     assert status == 200 and len(calls) == 2
     assert all(case['visible'] for case in data['revision']['draft']['examples'])
+
+
+def test_exhausted_rate_limit_returns_sanitized_detail(server, monkeypatch):
+    import modelspell
+    import ui.service
+    calls = []
+    body = json.dumps({'error': {'code': 429, 'message': 'raw upstream text',
+                                 'metadata': {'provider_name': 'Alpha'}}, 'user_id': 'acct-123'})
+
+    def complete(endpoint, model, messages, **settings):
+        calls.append(settings.get('provider'))
+        raise modelspell.BackendError('provider returned HTTP 429: raw upstream text', status=429, body=body)
+
+    monkeypatch.setattr(modelspell, 'complete', complete)
+    monkeypatch.setattr(modelspell, 'list_providers', lambda *a, **k: [])
+    monkeypatch.setattr(ui.service, '_sleep', lambda seconds: None)
+    assert request(server, '/api/key', {'api_key': 'secret'})[0] == 200
+    status, data = request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Trim'})
+    assert status == 502 and len(calls) == 4 and calls == [None] * 4
+    assert data == {'error': 'BackendError', 'details': {
+        'reason': 'rate_limited', 'scope': 'provider', 'retry_exhausted': True}}
+    assert not any(marker in json.dumps(data) for marker in ('user_id', 'acct-123', 'raw upstream', 'secret'))

@@ -103,3 +103,37 @@ def test_report_keeps_both_attempts_and_rejected_source(runner):
     assert second['validation']['field'] == 'source'
     assert any(issue['line'] == 2 for issue in second['validation']['issues'])
     assert result['outcome'] == 'source_rejected'
+
+
+TASK_RULES = {
+    5: ['Numeric zero is a present reading, not a missing or null reading.'],
+    6: ['Trim the key and value independently.', 'An interior `#` is not a comment marker.',
+        'Split each remaining line at only its first `=`', 'For repeated trimmed keys, retain the last value.'],
+    7: ['A zero unit price is valid; a zero quantity is invalid.',
+        'Output errors in input-record order. Within each record, use field order `id`, `quantity`, `unit_price_cents`.'],
+    12: ['separate list of reversed pairs in input order'],
+    14: ['Keep invoices in invoice input order within each list.',
+         'List each unmatched payment record individually in payment input order.'],
+    15: ['sorted by category'],
+}
+
+
+def test_normative_task_rules_reach_every_difficulty():
+    from scriptspell.prompt_files import load_presets
+    difficulties, _, presets = load_presets()
+    assert len(presets) == 20
+    for number, rules in TASK_RULES.items():
+        variants = presets[number - 1][1]
+        for level in difficulties:
+            for rule in rules:
+                assert rule in variants[level], (number, level, rule)
+
+
+def test_preset_07_contract_guidance_matches_task_without_changing_schema():
+    from scriptspell.prompt_files import load_preset_contracts
+    contract = load_preset_contracts()['07']
+    assert contract['interface'] == {'inputs': {'orders': 'list[dict]'}, 'outputs': {'errors': 'list[dict]'}}
+    assert contract['records'] == {'outputs.errors[]': {'required': {'index': 'int', 'field': 'str'}}}
+    guidance = contract['guidance']
+    assert 'zero is invalid' in guidance and 'zero is valid' in guidance
+    assert 'field order id, quantity, unit_price_cents' in guidance

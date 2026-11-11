@@ -10,7 +10,7 @@ Invoice records with unique IDs and positive balances in integer cents, plus pay
 
 Expected output
 
-Separate unpaid, partial, settled and overpaid invoice lists, plus unmatched payments. An invoice with zero paid is unpaid. Compare summed payments with its balance for the other categories.
+Separate unpaid, partial, settled and overpaid invoice lists, plus unmatched payments. An invoice with zero paid is unpaid. Compare summed payments with its balance for the other categories. Keep invoices in invoice input order within each list. List each unmatched payment record individually in payment input order.
 
 ## Medium guidance
 

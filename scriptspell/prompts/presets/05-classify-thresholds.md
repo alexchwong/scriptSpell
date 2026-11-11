@@ -2,7 +2,7 @@
 
 ## Task
 
-Classify readings against inclusive bounds as below, within, or above, with missing and null readings in a separate category.
+Classify readings against inclusive bounds as below, within, or above, with missing and null readings in a separate category. Numeric zero is a present reading, not a missing or null reading.
 
 Input
 

@@ -10,7 +10,7 @@ Two lists, one of orders with customer IDs and one of customer records with uniq
 
 Expected output
 
-All order records in their original order, enriched with the corresponding customer name or null when the ID has no match.
+All order records in their original order, retaining every original field and adding `customer_name` with the matched name or null when the ID has no match.
 
 ## Medium guidance
 

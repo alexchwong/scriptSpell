@@ -126,8 +126,16 @@ class Handler(BaseHTTPRequestHandler):
         except modelspell.ModelSpellError as exc:
             # Class names give useful failure categories without echoing credentials or prompts.
             error = {'error': type(exc).__name__}
+            details = {}
+            rate_limit = service.rate_limit_detail(exc)
+            if rate_limit is not None:
+                # Keep the established category name; add only allowlisted retry facts.
+                error['error'] = 'BackendError'
+                details.update(rate_limit)
             if hasattr(exc, 'authoring_first_attempt'):
-                error['details'] = {'first_attempt': exc.authoring_first_attempt}
+                details['first_attempt'] = exc.authoring_first_attempt
+            if details:
+                error['details'] = details
             self.send(502, error)
         except RuntimeError:
             self.send(503, {'error': 'cleanup_failed'})

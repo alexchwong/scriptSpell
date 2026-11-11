@@ -122,8 +122,9 @@ def main(argv=None):
     if not key:
         parser.error('set OPENROUTER_API_KEY for an unattended run')
 
+    # This runner advertises a fixed request budget; keep it exact by disabling 429 recovery here.
     send = dispatch(modelspell.Endpoint('openrouter', api_key=key), modelspell.CancelHandle(), {},
-                    timeout=args.timeout)
+                    timeout=args.timeout, max_429_retries=0)
     results = []
     report = dict(status='INCOMPLETE', settings=dict(settings, example_count=args.examples, timeout=args.timeout),
                   tasks_requested=len(jobs), results=results)

@@ -10,7 +10,7 @@ Text lines in their original order, possibly containing blanks, hash comments or
 
 Expected output
 
-A mapping from key to its last value and a list of one-based line numbers for malformed lines. Skip blanks and comments. A non-comment line without an equals sign is malformed.
+A mapping from key to its last value and a list of one-based line numbers for malformed lines. After trimming each whole line, skip blanks and lines whose first character is `#`. A `#` elsewhere is ordinary content. A non-comment line without an equals sign is malformed.
 
 ## Medium guidance
 

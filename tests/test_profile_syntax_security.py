@@ -154,3 +154,37 @@ def test_non_utf8_source_is_a_structured_refusal():
     source='def transform(inputs):\n    return {"out": "\ud800"}'
     assert validate_source(source)['outcome']=='source_rejected'
     assert run(source,{},['out'])['outcome']=='source_rejected'
+
+
+def _issues(source):
+    checked=validate_source(source)
+    return checked['outcome'],{(issue['code'],issue.get('symbol'),issue.get('line')) for issue in checked.get('issues',[])}
+
+@pytest.mark.parametrize('source,line',[
+ ('def transform(inputs):\n    return {"out": str(Decimal("1"))}',2),
+ ('def transform(inputs):\n    value = inputs["x"]\n    return {"out": isinstance(value, Decimal)}',3),
+])
+def test_bare_decimal_is_rejected_at_source_acceptance(source,line):
+    outcome,issues=_issues(source)
+    assert outcome=='source_rejected'
+    assert ('name_denied','Decimal',line) in issues
+
+@pytest.mark.parametrize('source',[
+ 'from decimal import Decimal\ndef transform(inputs):\n    return {"out": str(Decimal("1"))}',
+ 'import decimal\ndef transform(inputs):\n    return {"out": str(decimal.Decimal("1"))}',
+ 'from decimal import Decimal as D\ndef transform(inputs):\n    return {"out": str(D("1"))}',
+])
+def test_imported_decimal_forms_validate_and_execute(source):
+    assert validate_source(source)['outcome']=='ok'
+    assert run(source,{},['out']).get('values')=={'out':'1'}
+
+@pytest.mark.parametrize('source',[
+ 'def transform(inputs):\n    Decimal = str\n    return {"out": Decimal("1")}',
+ 'def Decimal(x):\n    return x\ndef transform(inputs):\n    return {"out": Decimal("1")}',
+ 'import decimal as Decimal\ndef transform(inputs):\n    return {"out": 1}',
+ 'from decimal import InvalidOperation as Decimal\ndef transform(inputs):\n    return {"out": 1}',
+ 'from decimal import Decimal as _ss_Decimal\ndef transform(inputs):\n    return {"out": 1}',
+ 'def transform(inputs):\n    return {"out": str(_ss_Decimal("1"))}',
+])
+def test_decimal_rebinding_and_impersonation_still_refused(source):
+    assert validate_source(source)['outcome']=='source_rejected'

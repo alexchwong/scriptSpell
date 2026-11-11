@@ -18,4 +18,4 @@ Validate fields independently and exclude booleans before checking integer bound
 
 ## Easy guidance
 
-Keep collecting errors when a record has several invalid fields. Cover zero price, zero quantity, and boolean quantity.
+Keep collecting errors when a record has several invalid fields. Cover zero price (valid), zero quantity (invalid), and boolean quantity (invalid).

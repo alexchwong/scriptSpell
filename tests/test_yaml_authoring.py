@@ -222,3 +222,12 @@ examples:
 """)
     assert flow.pairs[0]['inputs']['readings'] == [{'value': Decimal('1.1')}, {}]
     assert "value: '1.1'" in flow.examples_yaml()
+
+
+def test_concordance_comparison_stays_order_and_type_sensitive():
+    # Generated expectations are not authoritative; agreement must be exact, including list order.
+    assert same_value([{'index': 0, 'field': 'id'}, {'index': 0, 'field': 'quantity'}],
+                      [{'index': 0, 'field': 'id'}, {'index': 0, 'field': 'quantity'}])
+    assert not same_value([{'index': 0, 'field': 'id'}, {'index': 0, 'field': 'quantity'}],
+                          [{'index': 0, 'field': 'quantity'}, {'index': 0, 'field': 'id'}])
+    assert not same_value({'out': 1}, {'out': True})

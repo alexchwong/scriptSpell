@@ -20,6 +20,9 @@ FIXED_CASES = {
         ("Only a leading hash starts a comment; the last value wins",
          {'lines': ['  # ignored=1', 'x=a', 'x=b=c#d', '  ', 'text # malformed', 'y=']},
          {'values': {'x': 'b=c#d', 'y': ''}, 'malformed_lines': [5]}),
+        ("Trim split parts independently and retain the last value for trimmed keys",
+         {'lines': ['name = Alex', ' name= Pat ', 'code = a=b#c', 'empty = ']},
+         {'values': {'name': 'Pat', 'code': 'a=b#c', 'empty': ''}, 'malformed_lines': []}),
     ),
     '07': (
         ("Zero price is valid, and zero or boolean quantity is invalid",
@@ -95,8 +98,9 @@ def _parse_lines(inputs):
         if not separator:
             malformed.append(index)
             continue
-        if not key or key != key.strip() or value != value.strip():
-            raise Ineligible('empty key or whitespace around split parts has unspecified semantics')
+        key, value = key.strip(), value.strip()
+        if not key:
+            raise Ineligible('empty keys have unspecified semantics')
         values[key] = value
     return {'values': values, 'malformed_lines': malformed}
 
@@ -132,21 +136,7 @@ def _join_orders(inputs):
 REFERENCES = {'05': _classify, '06': _parse_lines, '07': _validate_orders, '09': _join_orders}
 
 
-def _error_counts(value):
-    if type(value) is not dict or value.keys() != {'errors'} or type(value['errors']) is not list:
-        return None
-    entries = Counter()
-    for item in value['errors']:
-        if (type(item) is not dict or item.keys() != {'index', 'field'}
-                or type(item['index']) is not int or type(item['field']) is not str):
-            return None
-        entries[item['index'], item['field']] += 1
-    return entries
-
-
 def _matches(task, expected, actual):
-    if task == '07':
-        return _error_counts(actual) == _error_counts(expected)
     return same_value(expected, actual)
 
 

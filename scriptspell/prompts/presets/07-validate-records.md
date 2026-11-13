@@ -10,7 +10,7 @@ An ordered list of order records. Fields may be missing or of the wrong type, in
 
 Expected output
 
-A list of all errors with the zero-based record index and field name. Report missing fields and multiple violations independently.
+A list of all errors with the zero-based record index and field name. Report missing fields and multiple violations independently. A zero unit price is valid; a zero quantity is invalid. Output errors in input-record order. Within each record, use field order `id`, `quantity`, `unit_price_cents`.
 
 ## Medium guidance
 

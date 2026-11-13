@@ -292,7 +292,7 @@ examples:
     assert '$.result[0].order_id' in output
 
 
-def test_reference_checks_eligibility_and_order_independent_errors(staged):
+def test_reference_checks_eligibility(staged):
     from decimal import Decimal
 
     from scripts.staged_verification import reference_verification
@@ -309,9 +309,72 @@ def test_reference_checks_eligibility_and_order_independent_errors(staged):
     assert ref['python_actual']['eligible'] == 1
     assert ref['cases'][1]['outcome'] == 'input_out_of_spec'
 
-    errors = [{'index': 0, 'field': 'id'}, {'index': 0, 'field': 'quantity'}]
-    sample = dict(example_input={'orders': [{'quantity': False, 'unit_price_cents': 0}]},
-                  expected_output={'errors': errors[::-1]}, visible=True)
-    ref = reference_verification('07', [sample], [{'actual': {'errors': errors + errors[:1]}}])
+
+@pytest.mark.parametrize('lines, values', [
+    (['name = Alex'], {'name': 'Alex'}),
+    (['name = Alex', ' name= Pat ', 'code = a=b#c', 'empty = '],
+     {'name': 'Pat', 'code': 'a=b#c', 'empty': ''}),
+])
+def test_reference_trims_split_parts(staged, lines, values):
+    from scripts.staged_verification import reference_verification
+
+    expected = {'values': values, 'malformed_lines': []}
+    sample = dict(example_input={'lines': lines}, expected_output=expected, visible=True)
+    ref = reference_verification('06', [sample], [{'actual': expected}])
+    assert ref['cases'][0]['eligible']
     assert ref['generated_expectation']['status'] == 'PASS'
-    assert ref['python_actual']['status'] == 'FAIL'
+    assert ref['python_actual']['status'] == 'PASS'
+
+
+@pytest.mark.parametrize('line', ['=value', '  = value'])
+def test_reference_keeps_empty_keys_ineligible(staged, line):
+    from scripts.staged_verification import reference_verification
+
+    sample = dict(example_input={'lines': [line]}, expected_output={}, visible=True)
+    ref = reference_verification('06', [sample])
+    assert not ref['cases'][0]['eligible']
+    assert ref['cases'][0]['outcome'] == 'input_out_of_spec'
+
+
+@pytest.mark.parametrize('order, status', [
+    ([0, 1, 2, 3, 4], 'PASS'),
+    ([1, 0, 2, 3, 4], 'FAIL'),
+    ([2, 3, 4, 0, 1], 'FAIL'),
+    ([0, 1, 2, 3, 4, 0], 'FAIL'),
+])
+def test_independent_order_checks_require_record_then_field_order(staged, order, status):
+    from scripts.staged_verification import FIXED_CASES, fixed_verification, reference_verification
+
+    _, inputs, expected = FIXED_CASES['07'][0]
+    actual = {'errors': [expected['errors'][index] for index in order]}
+    sample = dict(example_input=inputs, expected_output=actual, visible=True)
+    ref = reference_verification('07', [sample], [{'actual': actual}])
+    assert ref['generated_expectation']['status'] == status
+    assert ref['python_actual']['status'] == status
+    draft = dict(source=f'def transform(inputs):\n    return {actual!r}',
+                 unmet_requirements=[], examples=[sample])
+    assert fixed_verification('07', draft)['status'] == status
+
+
+@pytest.mark.parametrize('trim_parts, status', [(True, 'PASS'), (False, 'FAIL')])
+def test_fixed_parse_checks_independent_trimming(staged, trim_parts, status):
+    from scripts.staged_verification import FIXED_CASES, fixed_verification
+
+    source = """def transform(inputs):
+    values = {}
+    malformed = []
+    for index, line in enumerate(inputs['lines'], 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if '=' not in line:
+            malformed.append(index)
+            continue
+        key, value = line.split('=', 1)
+        values[key.strip() if TRIM else key] = value.strip() if TRIM else value
+    return {'values': values, 'malformed_lines': malformed}
+""".replace('TRIM', str(trim_parts))
+    _, inputs, expected = FIXED_CASES['06'][0]
+    draft = dict(source=source, unmet_requirements=[],
+                 examples=[dict(example_input=inputs, expected_output=expected)])
+    assert fixed_verification('06', draft)['status'] == status

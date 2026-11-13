@@ -10,7 +10,7 @@ Text lines in their original order, possibly containing blanks, hash comments or
 
 Expected output
 
-A mapping from key to its last value and a list of one-based line numbers for malformed lines. After trimming each whole line, skip blanks and lines whose first character is `#`. A `#` elsewhere is ordinary content. A non-comment line without an equals sign is malformed.
+A mapping from key to its last value and a list of one-based line numbers for malformed lines. After trimming each whole line, skip blanks and lines whose first character is `#`. An interior `#` is not a comment marker. A non-comment line without an equals sign is malformed. Split each remaining line at only its first `=`. Trim the key and value independently. For repeated trimmed keys, retain the last value.
 
 ## Medium guidance
 

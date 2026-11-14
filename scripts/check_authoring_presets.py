@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 
 import modelspell
-from scriptspell import AuthoringError, generate_draft, run_examples, validate_model_settings
+from scriptspell import AuthoringError, generate_draft, run_examples
+from scriptspell.modelspell_adapter import make_dispatch
 from scriptspell.workflow import display_json
 from ui.presets import DEFAULT_DIFFICULTY, DIFFICULTIES, PRESETS
-from ui.service import dispatch
+from ui.model_errors import provider_error, redact, setup_error
 
 DEFAULT_MODEL = 'qwen/qwen3-coder-next'
 BLOCKED_OUTCOMES = {'cleanup_failed', 'dependency_unavailable', 'platform_unavailable', 'worker_crash'}
@@ -28,10 +29,7 @@ def evaluate(send, settings, instruction, example_count, *, api_key=''):
         try:
             response = send(materials, model_settings)
         except modelspell.ModelSpellError as exc:
-            entry['provider_error'] = dict(type=type(exc).__name__, http_status=getattr(exc, 'status', None))
-            body = getattr(exc, 'body', '')
-            if body:
-                entry['provider_error']['body'] = capture(body)
+            entry['provider_error'] = provider_error(exc)
             raise
         entry['response'] = dict(capture(response.text), finish_reason=response.finish_reason,
                                  truncated=response.truncated, model=getattr(response, 'model', None),
@@ -79,6 +77,27 @@ def _evaluate(send, settings, instruction, example_count, on_attempt):
     return dict(status=status, source=draft['source'], examples=cases)
 
 
+def cli_settings(parser, args):
+    model = args.model.strip()
+    if not model:
+        parser.error('model_required')
+    return dict(model=model, temperature=args.temperature, reasoning=args.reasoning,
+                max_tokens=args.max_tokens)
+
+
+def bind_openrouter(parser, key, settings, timeout, *, dry_run):
+    endpoint = (modelspell.Endpoint('openrouter', api_key_env='') if dry_run
+                else modelspell.Endpoint('openrouter', api_key=key))
+    options = {name: value for name, value in settings.items() if name != 'model'}
+    try:
+        dispatch = make_dispatch(endpoint, settings['model'], options=dict(options, timeout=timeout),
+                                 cancel=None if dry_run else modelspell.CancelHandle())
+    except (AuthoringError, modelspell.ModelSpellError) as exc:
+        code, reason = setup_error(exc, key)
+        parser.error(f'{code}: {reason}' if reason else code)
+    return endpoint, dispatch
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Generate and run the playground presets through OpenRouter and Monty. Live runs incur API charges.')
@@ -102,42 +121,35 @@ def main(argv=None):
         return 0
     if not 1 <= args.examples <= 20 or not 1 <= args.max_tokens <= 16384 or not 0 < args.timeout <= 300:
         parser.error('use 1–20 examples, 1–16384 max tokens, and a timeout in (0, 300]')
-    try:
-        settings = validate_model_settings(model=args.model, temperature=args.temperature,
-                                           reasoning=args.reasoning, max_tokens=args.max_tokens)
-    except AuthoringError as exc:
-        parser.error(exc.code)
+    settings = cli_settings(parser, args)
+    key = os.getenv('OPENROUTER_API_KEY', '').strip()
+    _, send = bind_openrouter(parser, key, settings, args.timeout, dry_run=args.dry_run)
+    if not args.dry_run and not key:
+        parser.error('set OPENROUTER_API_KEY for an unattended run')
 
     difficulties = DIFFICULTIES if args.difficulty == 'all' else (args.difficulty,)
     jobs = [(task_id, title, level, variants[level])
             for task_id, (title, variants) in zip(task_ids, PRESETS)
             if not args.task or task_id in args.task for level in difficulties]
-    print(f"{settings['model']} · up to {2 * len(jobs)} paid requests · "
+    print(f"{redact(settings['model'], key)} · up to {2 * len(jobs)} paid requests · "
           f'{args.examples} examples and {args.max_tokens} output tokens per request', flush=True)
     if args.dry_run:
         for task_id, title, level, instruction in jobs:
             print(f'\n{task_id} {title} [{level}]\n{instruction}')
         return 0
-    key = os.getenv('OPENROUTER_API_KEY', '').strip()
-    if not key:
-        parser.error('set OPENROUTER_API_KEY for an unattended run')
-
-    # This runner advertises a fixed request budget; keep it exact by disabling 429 recovery here.
-    send = dispatch(modelspell.Endpoint('openrouter', api_key=key), modelspell.CancelHandle(), {},
-                    timeout=args.timeout, max_429_retries=0)
     results = []
     report = dict(status='INCOMPLETE', settings=dict(settings, example_count=args.examples, timeout=args.timeout),
                   tasks_requested=len(jobs), results=results)
     args.report.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
-        args.report.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        args.report.write_text(json.dumps(redact(report, key), indent=2) + '\n', encoding='utf-8')
 
     save()  # Confirm the destination is writable before making any paid requests.
     interrupted = False
     try:
         for task_id, title, level, instruction in jobs:
-            result = evaluate(send, settings, instruction, args.examples, api_key=key)
+            result = evaluate(send, {}, instruction, args.examples, api_key=key)
             results.append(dict(result, task=task_id, title=title, difficulty=level, instruction=instruction))
             print(f"{result['status']} {task_id} {title} [{level}]", flush=True)
             save()

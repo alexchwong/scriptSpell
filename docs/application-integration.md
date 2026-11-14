@@ -9,7 +9,7 @@ host from submitted code and no requirement to use AgentWiz or modelSpell.
 | Concern | scriptSpell | Host application (including AgentWiz) |
 | --- | --- | --- |
 | Language | Tested vocabulary, generated authoring instructions, static source policy | Explain supported tasks; prevent promises of arbitrary Python support |
-| Model authoring | `prepare_authoring` and `validate_proposal` | Choose role/provider/model; credentials, dispatch, response parsing, token caps and repair budget |
+| Model authoring | Prompts, bounded format corrections, completion checks and draft validation | Choose role, endpoint and options; authorize each dispatch and own credentials, request limits and spending |
 | Interface | Receives input dictionary and fixed output names; enforces names and supported value types | Own input/output schemas, required fields, semantics and business validation |
 | Testing | Execute each supplied test through `run` | Supply cases and expected answers, check contracts/results; keep held-out answers out of repair prompts |
 | Execution | Monty invocation, exact-value codec, limits, cancellation, worker cleanup | Admission/concurrency, UI background task, overall budgets and downstream routing |
@@ -21,6 +21,58 @@ selected model. Source itself can contain identifiers. A script's successful exe
 must never remove a local-only restriction or grant permission for a cloud call.
 
 ## Authoring and repair lifecycle
+
+Use the authoring workflows with a dispatcher that authorizes the actual messages
+on every call, including format corrections and repair prompts with prior source or
+test evidence. Resolve the model role and per-run settings in the caller.
+
+```python
+from scriptspell import generate_draft, model_messages
+
+def dispatch(materials, settings):
+    messages = model_messages(materials)
+    authorize_and_admit(messages, materials["request_context"])
+    return modelspell.complete(endpoint, model, messages, cancel=cancel, **resolved_options)
+
+draft = generate_draft(dispatch, {}, "Trim text.")
+```
+
+`request_context` has `stage` and one-based `attempt` values. A format correction
+increments the content attempt. A transport attempt belongs to the same content attempt.
+For prebound dispatch use empty per-call settings. A mapping with `model` and only
+the keys `model`, `temperature`, `reasoning` and `max_tokens` uses the legacy
+`validate_model_settings()` helper. Other maps reach the dispatcher with their
+keys and values intact.
+
+Return a completion with `text`, `finish_reason` and `truncated`. A normal
+completion requires `finish_reason="stop"` and no truncation. With native LM Studio,
+preserve `transport="lmstudio_native"` to allow a successful reply with
+`finish_reason=None`. The native truncation heuristic requires an output token cap
+and a usable provider token count. Without that signal, valid native content can
+be accepted. Propagate cancellation with its partial result attached to the error.
+
+For standalone use, bind an endpoint and model ID or the discovered `ModelInfo`.
+
+```python
+from scriptspell.modelspell_adapter import make_dispatch
+
+dispatch = make_dispatch(endpoint, model, options={"temperature": 0, "max_tokens": 4096},
+                         cancel=cancel)
+draft = generate_draft(dispatch, {}, "Trim text.")
+```
+
+The factory imports optional modelSpell when called and snapshots option containers
+before offline preflight. The current candidate uses `check_completion()`. The
+published 0.3.0 pin uses `check_settings()` and checks the JSON encoding of a
+non-null provider policy at binding. With that pin the SDK checks the model argument
+and timeout before sending. For OpenRouter pinning, authorize and resolve selection
+using the [modelSpell selection example](https://github.com/alexchwong/modelSpell/blob/7e23d9d15076e53336f556bffebe83341a6ee9b3/examples/batch_selection.py)
+and pass `selection.policy` as `options["provider"]`. Use a caller-owned dispatcher
+for retry controls and backend-specific `extra` fields. The playground and paid
+preset and staged CLIs use Managed routing and zero transport retries.
+
+The manual proposal API remains available for applications that own the full
+authoring loop.
 
 1. Resolve the model role and authorize context before prompt preparation/dispatch.
 2. If a host contract is available, convert it into a JSON-serializable `interface` description containing
@@ -117,23 +169,17 @@ procedure. Do not retry execution or clear private library state to bypass it.
 
 ## AgentWiz adapter boundary
 
-At the reviewed AgentWiz devel revision, `agentwiz/script_step.py` executes Python files
-with JSON stdin/stdout through a subprocess supervisor. AgentWiz does not yet depend on
-scriptSpell. Its existing script format is not the `transform(inputs)` interface and
-must not be sent unchanged to Monty.
+The initial Workshop integration uses the injected path. On each send, check locality,
+authorization, Stop and request admission against the actual messages. Use zero
+paid probes and zero transport retries, with Managed routing or an existing provider
+mapping under the modelSpell 0.3.0 pin. The Manual and Automatic selector APIs are
+outside the initial Workshop integration.
 
-A consumer-side integration must add an explicit scriptSpell engine path, map block
-contracts to named inputs/outputs, and route model authoring through the application's
-model role and modelSpell client. Keep the workflow scheduler, block revision store,
-local-only flags, release Gate, contract validation and publication in AgentWiz.
-For scriptSpell calls, let scriptSpell own the Monty workers and cleanup; bridge Stop
-using the cancellation event instead of wrapping them with a second process owner.
-Existing arbitrary Python scripts require explicit rewriting or a separate engine path;
-there is no compatibility fallback.
-
-This change supplies the library-side contract and executable example. It does not
-modify AgentWiz, migrate its stored blocks or certify that adapter. Test the pinned
-candidate wheel in AgentWiz before publishing a coordinated integration release.
+AgentWiz owns the scheduler, block revisions, local-only flags, release Gate, contract
+validation and publication. Map an explicit scriptSpell engine path to named inputs
+and outputs and let scriptSpell own its Monty workers and cleanup. Bridge Stop using
+the cancellation event. Existing arbitrary Python scripts need explicit rewriting or
+a separate engine path. Verify the pinned wheel in AgentWiz for a coordinated release.
 
 ## Dependency and compatibility policy
 

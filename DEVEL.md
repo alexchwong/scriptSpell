@@ -78,7 +78,7 @@ or reference failure appears separately in stdout and the report, and can coexis
 with exit 0. The summary lists unattempted tasks and each independent check.
 
 - Check `request_count` for logical model calls, including YAML repairs.
-  With the current modelSpell pin, HTTP retry is disabled and each logical call
+  With either supported modelSpell build, HTTP retries are disabled and each logical call
   allows at most one HTTP attempt. The exact number of sends is unavailable.
 - Check `valid_draft`, `executed`, `failed_stage` and `attempts` for stage evidence.
   Reports omit raw provider error bodies and redact the API key. Generated data,
@@ -102,7 +102,7 @@ python -m scripts.check_authoring_staged --mode two-call \
 
 A matching run preserves earlier PASS and FAIL results and reuses accepted
 two-call examples when only Python is pending. Reports without a matching source,
-prompt, contract and settings manifest remain readable. Use repeatable `--task`
+prompt, contract, settings and imported modelSpell source manifest remain readable. Use repeatable `--task`
 to rerun selected presets from those reports. Use `reports/` for checkpoints so
 they stay outside the implementation fingerprint.
 
@@ -146,11 +146,20 @@ python -m ui --no-browser          # prints the token-protected URL
 ```
 
 Run the playground from the checkout. Keep `ui/` out of the wheel and sdist.
-The browser uses the public `AuthoringSession` workflow. The adapter uses pinned
-modelSpell 0.3.0 for discovery, setting checks and dispatch. The library imports
-neither UI nor model transport. Blank generation settings use provider defaults.
-Model requests have a 120-second timeout. Generation retries a format error once. It does not
-execute code. Accepted corrections and proposed repairs run the suite in Monty.
+The browser uses the public `AuthoringSession`, `StagedAuthoring` and `YamlAuthoring`
+workflows with `settings={}` and a bound `make_dispatch`. An injected host can
+also pass `settings={}`; only the legacy four-field shape uses
+`validate_model_settings()`. Share `model_messages()` for preview and transport.
+Keep modelSpell lazy in the optional adapter. The published 0.3.0 pin checks
+generation settings and JSON encoding of provider options at binding. The SDK
+checks the model argument and timeout before sending. The candidate uses
+`check_completion()` for offline preflight. Keep native LM Studio's result
+transport field so `finish_reason=None` can be checked alongside truncation.
+
+Blank generation settings use provider defaults. The playground uses a 120-second
+timeout. Keep the playground and both paid CLIs on Managed routing with zero transport
+retries. Generation can request one format correction. Accepted corrections and
+proposed repairs run the suite in Monty.
 
 The server binds only to 127.0.0.1 and checks a per-launch token and local Host/Origin.
 Keep provider keys in process memory and out of browser storage, journals and exports.
@@ -254,7 +263,7 @@ these probes, including from-import aliases and the namespace isolation regressi
 `docs/language-profile.md` for vocabulary changes; authoring instructions must remain
 derived from `profile()`.
 
-Keep model transport outside the product library. Preserve the version 4 single-example
+Keep provider transport in modelSpell or in the caller. The optional adapter binds ordinary modelSpell completions. Preserve the version 4 single-example
 prompt and proposal shape for existing consumers. The revision workflow also supports
 count-specific multi-example generation, correction and repair. All prompt construction,
 validation, comparisons and revision semantics belong in the library. Update the public
@@ -307,6 +316,19 @@ Never bypass process-identity verification and never mark an unobservable measur
 Identity is confirmed by sampling argv for the exact script path and the per-launch token
 until the child has exec'd, because a single sample can catch the still-forked parent's
 image and mislabel a live child as unobservable. Do not reduce that to one sample.
+
+### modelSpell adapter compatibility
+
+Run the offline suite in one environment with the published development pin and
+a separate environment with the exact committed modelSpell candidate wheel.
+Build the candidate from its own checkout with
+`python scripts/build_release.py --commit <full-sha> --smoke --output-dir <candidate-dir>`.
+Install scriptSpell's development extra in the candidate environment first, verify the
+wheel SHA-256, then install it with `python -m pip install --force-reinstall --no-deps <wheel>`.
+Check the imported modelSpell path, version and availability of `check_completion()`
+in both environments. Record the scriptSpell source state, candidate commit and wheel
+hash with the results. Smoke-test the installed scriptSpell wheel outside the checkout
+with and without modelSpell.
 
 ## Release gates
 

@@ -290,7 +290,7 @@ function render(data){
   $('draftTitle').textContent=isActive()?'Active draft':'Saved revision';
   const requested=revision.requested_settings;
   const notes=[draft.summary,...draft.assumptions.map(x=>'Assumption · '+x),...draft.unmet_requirements.map(x=>'Unmet · '+x)];
-  if(requested)notes.push('Requested · '+requested.model+' · temperature '+(requested.temperature??'default')+
+  if(requested)notes.push('Requested · '+(requested.model?requested.model+' · ':'')+'temperature '+(requested.temperature??'default')+
     ' · reasoning '+(requested.reasoning??'default')+' · max tokens '+(requested.max_tokens??'default'));
   if(revision.guidance)notes.push('Guidance · '+revision.guidance);
   if(!isActive())notes.push('Instruction · '+draft.instruction);
@@ -309,7 +309,7 @@ function review(attempt){
  $('reviewTitle').textContent=attempt.action.replaceAll('_',' ')+' · '+attempt.status;
  const requested=attempt.requested_settings;
  const info=[attempt.error,attempt.guidance?'Guidance · '+attempt.guidance:null,attempt.timestamp,
-  requested?'Requested · '+requested.model+' · temperature '+(requested.temperature??'default')+
+  requested?'Requested · '+(requested.model?requested.model+' · ':'')+'temperature '+(requested.temperature??'default')+
     ' · reasoning '+(requested.reasoning??'default')+' · max tokens '+(requested.max_tokens??'default'):null];
  if(attempt.regressions?.length)info.push(attempt.regressions.length+' regression(s) against the prior run');
  $('attemptInfo').textContent=info.filter(Boolean).join(' · ');

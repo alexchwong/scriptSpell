@@ -2,13 +2,12 @@
 import argparse
 from pathlib import Path
 
-from scriptspell import YamlAuthoring
+from scriptspell import YamlAuthoring, model_messages
 from scriptspell.prompt_files import load_preset_contracts
 from scriptspell.staged import StagedAuthoring, _interface
 from scriptspell.yaml_contract import validate_interface
 from scriptspell.workflow import AuthoringError, generation_preview, parse_json
 from ui.presets import DEFAULT_DIFFICULTY, DIFFICULTIES, PRESETS
-from ui.service import prompt_preview
 
 
 def main(argv=None):
@@ -68,11 +67,11 @@ def main(argv=None):
     except (AuthoringError, OSError, ValueError) as exc:
         issues = getattr(exc, "details", {}).get("issues", [])
         parser.error("\n".join([str(exc), *map(str, issues)]))
-    preview = prompt_preview(materials)
+    system, user = (message['content'] for message in model_messages(materials))
     if args.role == 'both':
-        print('SYSTEM\n\n' + preview['full_system'] + '\n\nUSER\n\n' + preview['user'])
+        print('SYSTEM\n\n' + system + '\n\nUSER\n\n' + user)
     else:
-        print(preview['full_system' if args.role == 'system' else 'user'], end='')
+        print(system if args.role == 'system' else user, end='')
     return 0
 
 

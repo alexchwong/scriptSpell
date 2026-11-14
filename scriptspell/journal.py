@@ -11,8 +11,39 @@ from uuid import uuid4
 
 from .codec import pack, unpack
 from .profile import Limits
-from .workflow import (AuthoringError, _guidance, correct_expected, edit_example, generate_draft,
-                       improve_python, json_display_value, run_examples, validate_model_settings)
+from .workflow import (AuthoringError, _guidance, _legacy_settings, correct_expected, edit_example, generate_draft,
+                       improve_python, json_display_value, run_examples)
+
+
+_MAX_METADATA_INTEGER = 2**53 - 1
+
+
+def _settings_metadata(settings):
+    if settings is None:
+        return None
+    safe = {}
+    model = settings.get('model')
+    if type(model) is str and len(model) <= 256 and model.strip():
+        safe['model'] = model
+    for field in ('temperature', 'reasoning', 'max_tokens'):
+        if field not in settings:
+            continue
+        value = settings[field]
+        if value is None:
+            safe[field] = None
+        elif field == 'temperature' and type(value) in (int, float) and abs(value) <= _MAX_METADATA_INTEGER:
+            safe[field] = value
+        elif field == 'reasoning' and type(value) is str and value in ('off', 'low', 'medium', 'high'):
+            safe[field] = value
+        elif field == 'max_tokens' and type(value) is int and 1 <= value <= _MAX_METADATA_INTEGER:
+            safe[field] = value
+    return safe or None
+
+
+def _requested_metadata(settings, requested_settings):
+    if requested_settings is None:
+        requested_settings = _legacy_settings(settings)
+    return _settings_metadata(requested_settings)
 
 
 def _now():
@@ -148,7 +179,7 @@ class AuthoringSession:
         try:
             candidate, reports = operation()
         except Exception as exc:
-            entry.update(status='failed', error=exc.code if type(exc) is AuthoringError else type(exc).__name__)
+            entry.update(status='failed', error=exc.code if isinstance(exc, AuthoringError) else type(exc).__name__)
             if self._data is original:
                 self._write(data)
             raise
@@ -167,11 +198,11 @@ class AuthoringSession:
         self._write(data)
         return attempt_id
 
-    def generate(self, revision_id, dispatch, settings, instruction, **options):
+    def generate(self, revision_id, dispatch, settings, instruction, *, requested_settings=None, **options):
         with self._lock:
             self._check_active(revision_id)
-            settings = validate_model_settings(**settings)
-            attempt_id = self._try_model('generate', settings, '', lambda: (
+            metadata = _requested_metadata(settings, requested_settings)
+            attempt_id = self._try_model('generate', metadata, '', lambda: (
                 generate_draft(dispatch, settings, instruction, **options), None))
             return self._data['attempts'][attempt_id]['accepted_revision_id']
 
@@ -181,7 +212,8 @@ class AuthoringSession:
             self._check_active(revision_id)
             data = deepcopy(self._data)
             active = self._record_revision(data, deepcopy(draft),
-                                           action or ('staged' if staged else 'paste'), settings=settings)
+                                           action or ('staged' if staged else 'paste'),
+                                           settings=_settings_metadata(settings))
             self._write(data)
             return active
 
@@ -204,25 +236,26 @@ class AuthoringSession:
             self._write(data)
             return new_id
 
-    def correct(self, revision_id, dispatch, settings, example_id, guidance):
+    def correct(self, revision_id, dispatch, settings, example_id, guidance, *, requested_settings=None):
         with self._lock:
             self._check_active(revision_id)
             draft = self._revision(revision_id)['draft']
             if draft['unmet_requirements']:
                 raise AuthoringError('requirements_unmet')
-            settings = validate_model_settings(**settings)
+            metadata = _requested_metadata(settings, requested_settings)
             if type(example_id) is not str:
                 raise AuthoringError('unknown_example')
             guidance = _guidance(guidance, required=True)
-            return self._try_model('correct_expected', settings, guidance, lambda: (
+            return self._try_model('correct_expected', metadata, guidance, lambda: (
                 correct_expected(dispatch, settings, draft, example_id, guidance), None),
                 selection={'example_id': example_id})
 
-    def improve(self, revision_id, dispatch, settings, example_ids, guidance='', *, cancel=None):
+    def improve(self, revision_id, dispatch, settings, example_ids, guidance='', *, cancel=None,
+                requested_settings=None):
         with self._lock:
             self._check_active(revision_id)
             draft = self._revision(revision_id)['draft']
-            settings = validate_model_settings(**settings)
+            metadata = _requested_metadata(settings, requested_settings)
             basis_test = _latest_test(self._data, revision_id)
             if basis_test is None:
                 raise AuthoringError('select_failures')
@@ -238,7 +271,7 @@ class AuthoringSession:
                     raise AuthoringError('cancelled')
                 return candidate, results
 
-            return self._try_model('improve_python', settings, _guidance(guidance), propose,
+            return self._try_model('improve_python', metadata, _guidance(guidance), propose,
                                    selection={'example_ids': example_ids}, basis_test=basis_test)
 
     def decide(self, revision_id, attempt_id, accept, *, cancel=None):

@@ -6,7 +6,7 @@ from .profile import profile
 from .prompt_files import render, task_text
 from .source import validate_source
 from .staged import _unwrap
-from .workflow import AuthoringError, validate_model_settings
+from .workflow import AuthoringError, _dispatch_settings, _dispatch_text
 from .yaml_contract import YamlContractError, dump_examples, validate_examples, validate_interface
 
 
@@ -69,8 +69,9 @@ class YamlAuthoring:
     def generate(self, stage, dispatch, settings, *, on_reject=None):
         """Perform one stage and return any rejected attempt's diagnostics."""
         materials = self.materials(stage)
-        settings = validate_model_settings(**settings)
-        text = _reply(dispatch, materials, settings)
+        settings = _dispatch_settings(settings)
+        label = 'yaml_one_shot' if stage == 'one-shot' else f'yaml_{stage}'
+        text = _dispatch_text(dispatch, settings, materials, label)
         try:
             self.accept(stage, text)
         except YamlContractError as first:
@@ -84,7 +85,7 @@ class YamlAuthoring:
                          '\n'.join(f'- {issue}' for issue in initial) +
                          '\n\nExact rejected reply follows\n\n' + text)
             try:
-                self.accept(stage, _reply(dispatch, retry, settings))
+                self.accept(stage, _dispatch_text(dispatch, settings, retry, label, 2))
             except AuthoringError as second:
                 second.details = dict(getattr(second, 'details', {}), first_attempt=initial)
                 raise
@@ -137,10 +138,3 @@ def _source(text):
         error.details = {'issues': checked.get('issues', [])}
         raise error
     return text
-
-
-def _reply(dispatch, materials, settings):
-    reply = dispatch(materials, dict(settings))
-    if reply.truncated or reply.finish_reason != 'stop':
-        raise AuthoringError('incomplete_model_response')
-    return reply.text

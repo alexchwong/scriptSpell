@@ -8,17 +8,17 @@ from time import monotonic, sleep
 
 import modelspell
 
-from scriptspell import AuthoringError, YamlAuthoring, run_examples, validate_model_settings
+from scriptspell import AuthoringError, YamlAuthoring, run_examples
 from scriptspell.prompt_files import load_preset_contracts
-from scriptspell.staged import StageError, StagedAuthoring, _interface, _MAX_REPLY
+from scriptspell.staged import StagedAuthoring, _interface, _MAX_REPLY
 from scriptspell.yaml_contract import validate_interface
 from scriptspell.workflow import parse_json
-from scripts.check_authoring_presets import BLOCKED_OUTCOMES, DEFAULT_MODEL
-from scripts.staged_report import (atomic_report, digest, digest_json, print_summary, print_task,
-                                   provider_error, redact, source_identity, summarize, yaml_counts)
+from scripts.check_authoring_presets import BLOCKED_OUTCOMES, DEFAULT_MODEL, bind_openrouter, cli_settings
+from scripts.staged_report import (atomic_report, digest, digest_json, package_source_digest,
+                                   print_summary, print_task, source_identity, summarize, yaml_counts)
 from scripts.staged_verification import case_report, fixed_verification, reference_verification
 from ui.presets import DEFAULT_DIFFICULTY, DIFFICULTIES, PRESETS
-from ui.service import dispatch
+from ui.model_errors import provider_error, redact
 
 ROOT = Path(__file__).resolve().parents[1]
 TRANSIENT_PAUSE_SECONDS = 2
@@ -102,18 +102,17 @@ def evaluate(send, settings, instruction, example_count, *, interface=None, mode
                 rejected_reply = None
             attempts[-1]['validation'] = {'outcome': 'ok'}
             return
-        reply = record_request(flow.materials(stage), dict(settings))
+        before = len(attempts)
         try:
-            if reply.truncated or reply.finish_reason != 'stop':
-                raise StageError('incomplete_model_response')
-            flow.accept(stage, reply.text)
+            flow.generate(stage, record_request, settings)
             attempts[-1]['validation'] = {'outcome': 'ok'}
         except AuthoringError as exc:
             details = getattr(exc, 'details', {})
             cause = exc.__context__
             if isinstance(cause, json.JSONDecodeError):
                 details = dict(reason=cause.msg, line=cause.lineno, column=cause.colno)
-            attempts[-1]['validation'] = dict(outcome=exc.code, **details)
+            if len(attempts) > before:
+                attempts[-1]['validation'] = dict(outcome=exc.code, **details)
             raise
 
     outcome = None
@@ -201,7 +200,7 @@ def evaluate(send, settings, instruction, example_count, *, interface=None, mode
     result['reference'] = reference_verification(task, examples, executions)
     if outcome:
         result.update(reason=outcome, outcome=outcome, failed_stage=stage)
-    return redact(dict(result, status=status), os.getenv('OPENROUTER_API_KEY', '').strip())
+    return dict(result, status=status)
 
 
 def evaluate_examples(draft, executions=None):
@@ -300,11 +299,9 @@ def main(argv=None):
         args.examples = 3 if args.mode == 'legacy-json' else 1
     if not 1 <= args.examples <= 20 or not 1 <= args.max_tokens <= 16384 or not 0 < args.timeout <= 300:
         parser.error('use 1–20 examples, 1–16384 max tokens, and a timeout in (0, 300]')
-    try:
-        settings = validate_model_settings(model=args.model, temperature=args.temperature,
-                                           reasoning=args.reasoning, max_tokens=args.max_tokens)
-    except AuthoringError as exc:
-        parser.error(exc.code)
+    settings = cli_settings(parser, args)
+    key = os.getenv('OPENROUTER_API_KEY', '').strip()
+    endpoint, send = bind_openrouter(parser, key, settings, args.timeout, dry_run=args.dry_run)
 
     difficulties = DIFFICULTIES if args.difficulty == 'all' else (args.difficulty,)
     jobs = [(task_id, title, level, variants[level])
@@ -326,7 +323,7 @@ def main(argv=None):
     max_calls = 2 if args.examples_only or args.mode == 'one-shot-yaml' else 3
 
     def banner(maximum):
-        print(f"{settings['model']} · up to {maximum} logical calls and {maximum} HTTP attempts · "
+        print(f"{redact(settings['model'], key)} · up to {maximum} logical calls and {maximum} HTTP attempts · "
               f'{args.examples} examples and {args.max_tokens} output tokens per call', flush=True)
 
     if args.dry_run:
@@ -342,8 +339,10 @@ def main(argv=None):
                 print(materials['system'] + '\n\n' + materials['user'])
         return 0
 
-    key = os.getenv('OPENROUTER_API_KEY', '').strip()
-    endpoint = modelspell.Endpoint('openrouter', api_key=key)
+    try:
+        modelspell_source_sha256 = package_source_digest(modelspell)
+    except (OSError, TypeError) as exc:
+        parser.error(f'cannot fingerprint modelSpell source: {redact(str(exc), key)}')
     source = source_identity(ROOT)
     run_settings = dict(settings, example_count=args.examples, timeout=args.timeout)
     manifest = redact(dict(
@@ -354,7 +353,7 @@ def main(argv=None):
                    contract_sha256=digest(json.dumps(contracts.get(task, {}), allow_nan=False).encode())) for task, _, level, instruction in jobs],
         prompts_sha256=digest_json({str(path.relative_to(ROOT)): digest(path.read_bytes())
                                     for path in (ROOT / 'scriptspell' / 'prompts').rglob('*') if path.is_file()}),
-        source=source), key)
+        modelspell_source_sha256=modelspell_source_sha256, source=source), key)
 
     previous, origin = {}, None
     if args.resume:
@@ -375,9 +374,6 @@ def main(argv=None):
     max_pending_calls = sum(1 if args.mode == 'two-call' and previous.get((task, level), {}).get('examples_valid')
                             else max_calls for task, _, level, _ in pending)
     banner(max_pending_calls)
-
-    cancel = modelspell.CancelHandle()
-    send = dispatch(endpoint, cancel, {}, timeout=args.timeout)
 
     def counted_send(materials, model_settings):
         nonlocal requests
@@ -427,7 +423,7 @@ def main(argv=None):
                 report['interrupted'] = result.get('interrupted', False)
                 save()
 
-            result = evaluate(counted_send, settings, instruction, args.examples, mode=args.mode,
+            result = evaluate(counted_send, {}, instruction, args.examples, mode=args.mode,
                               task=task_id, checkpoint=checkpoint, examples_only=args.examples_only,
                               on_checkpoint=save_task, **contracts.get(task_id, {}))
             save_task(result)

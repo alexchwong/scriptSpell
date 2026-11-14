@@ -59,8 +59,8 @@ def test_http_key_protection_and_single_operation(server, monkeypatch):
     with server.operation:
         assert request(server, '/api/models', {})[0] == 409
     assert request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Trim', 'reasoning': 'low'}) == (
-        502, {'error': 'UnsupportedSetting'})
-    assert b'secret' not in (server.session.directory / 'journal.json').read_bytes()
+        400, {'error': 'UnsupportedSetting', 'details': {'issues': ['This model reports no reasoning support']}})
+    assert not (server.session.directory / 'journal.json').exists()
 
 
 def test_http_generation_edits_correction_and_preserves_draft_on_failure(server, monkeypatch):
@@ -81,14 +81,16 @@ def test_http_generation_edits_correction_and_preserves_draft_on_failure(server,
     status, data = request(server, '/api/generate', body)
     assert status == 200 and len(calls) == 1
     materials = prepare_authoring('Echo')
-    assert calls[0][0][0].content.startswith(materials['system'])
+    assert calls[0][0][0]['content'].startswith(materials['system'])
     status, preview = request(server, '/api/authoring-preview', body)
     assert status == 200
-    assert calls[0][0][0].content == preview['full_system']
-    assert calls[0][0][1].content == preview['user']
+    assert calls[0][0][0]['content'] == preview['full_system']
+    assert calls[0][0][1]['content'] == preview['user']
     assert preview['user'].startswith('Task\n\nEcho')
     assert {k: calls[0][1][k] for k in ('temperature', 'max_tokens', 'reasoning')} == {
         k: body[k] for k in ('temperature', 'max_tokens', 'reasoning')}
+    assert data['revision']['requested_settings'] == {k: body[k] for k in
+        ('model', 'temperature', 'reasoning', 'max_tokens')}
     active = data['active_id']
     case = data['revision']['draft']['examples'][0]
     assert case['result'] is None and '9007199254740993' in case['input_json']
@@ -156,7 +158,7 @@ def test_staged_previews_paste_execution_and_upstream_replacement(server, monkey
     monkeypatch.setattr(modelspell, 'complete', complete)
     status, inputs = request(server, '/api/stage', body)
     assert status == 200 and inputs['has_inputs']
-    assert [message.content for message in calls[0]] == [preview['full_system'], preview['user']]
+    assert [message['content'] for message in calls[0]] == [preview['full_system'], preview['user']]
     outputs_body = dict(body, stage='expectations', stage_token=inputs['stage_token'])
     status, outputs = request(server, '/api/stage',
                               dict(outputs_body, reply='{"outputs":{"1":{"out":2},"2":{"out":18014398509481986}}}'))
@@ -226,8 +228,8 @@ examples:
     assert status == 200 and preview['schema'] is None
     status, data = request(server, '/api/stage', body)
     assert status == 200 and data['retry_issues'] and len(calls) == 2
-    assert [message.content for message in calls[0]] == [preview['full_system'], preview['user']]
-    assert calls[1][1].content.endswith(rejected)
+    assert [message['content'] for message in calls[0]] == [preview['full_system'], preview['user']]
+    assert calls[1][1]['content'].endswith(rejected)
     python_body = dict(body, stage='python', stage_token=data['stage_token'])
     status, preview = request(server, '/api/authoring-preview', python_body)
     assert status == 200 and '198.25' not in preview['system']
@@ -256,23 +258,84 @@ examples:
     assert all(case['visible'] for case in data['revision']['draft']['examples'])
 
 
-def test_exhausted_rate_limit_returns_sanitized_detail(server, monkeypatch):
+def test_rate_limit_makes_one_managed_call_and_returns_sanitized_detail(server, monkeypatch):
     import modelspell
-    import ui.service
     calls = []
     body = json.dumps({'error': {'code': 429, 'message': 'raw upstream text',
                                  'metadata': {'provider_name': 'Alpha'}}, 'user_id': 'acct-123'})
 
     def complete(endpoint, model, messages, **settings):
-        calls.append(settings.get('provider'))
+        calls.append(settings)
         raise modelspell.BackendError('provider returned HTTP 429: raw upstream text', status=429, body=body)
 
     monkeypatch.setattr(modelspell, 'complete', complete)
-    monkeypatch.setattr(modelspell, 'list_providers', lambda *a, **k: [])
-    monkeypatch.setattr(ui.service, '_sleep', lambda seconds: None)
+    def unexpected_discovery(*args, **kwargs):
+        pytest.fail('unexpected provider discovery')
+
+    monkeypatch.setattr(modelspell, 'list_providers', unexpected_discovery)
     assert request(server, '/api/key', {'api_key': 'secret'})[0] == 200
     status, data = request(server, '/api/generate', {'model': 'test/model', 'instruction': 'Trim'})
-    assert status == 502 and len(calls) == 4 and calls == [None] * 4
+    assert status == 502 and len(calls) == 1 and 'provider' not in calls[0]
     assert data == {'error': 'BackendError', 'details': {
-        'reason': 'rate_limited', 'scope': 'provider', 'retry_exhausted': True}}
+        'reason': 'rate_limited', 'scope': 'provider'}}
     assert not any(marker in json.dumps(data) for marker in ('user_id', 'acct-123', 'raw upstream', 'secret'))
+
+
+def test_offline_preflight_and_redacted_requested_model(server, monkeypatch):
+    import modelspell
+    calls = []
+    key = 'private-api-credential'
+    monkeypatch.setenv('OPENROUTER_API_KEY', key)
+
+    def complete(endpoint, model, messages, **options):
+        calls.append((model, options))
+        return SimpleNamespace(text=json.dumps(dict(
+            source='def transform(inputs):\n    return {"out": inputs["n"]}',
+            summary='Echo', assumptions=[], unmet_requirements=[],
+            example_input={'n': 1}, expected_output={'out': 1})), finish_reason='stop', truncated=False)
+
+    monkeypatch.setattr(modelspell, 'complete', complete)
+    config = {'model': f' host/{key} ', 'instruction': 'Echo', 'temperature': 5}
+    status, error = request(server, '/api/generate', config)
+    assert status == 400 and error['error'] == 'ConfigError'
+    assert 'temperature' in error['details']['issues'][0]
+    assert not calls and not server.session.snapshot()['attempts']
+    status, data = request(server, '/api/generate', dict(config, temperature=0))
+    assert status == 200 and len(calls) == 1
+    assert calls[0][0] == f'host/{key}' and calls[0][1]['timeout'] == 120
+    assert 'provider' not in calls[0][1]
+    assert data['revision']['requested_settings']['model'] == 'host/[REDACTED]'
+    assert key not in (server.session.directory / 'journal.json').read_text()
+
+
+def test_close_cancels_active_completion_and_drops_partial_reply(server, monkeypatch):
+    import modelspell
+    from concurrent.futures import ThreadPoolExecutor
+    started = threading.Event()
+    handles = []
+
+    def complete(endpoint, model, messages, *, cancel, **options):
+        handles.append(cancel)
+        started.set()
+        until = threading.Event()
+        for _ in range(500):
+            if cancel.cancelled:
+                break
+            until.wait(0.01)
+        assert cancel.cancelled
+        error = modelspell.Cancelled()
+        error.partial = SimpleNamespace(text='private partial reply', finish_reason='stop', truncated=False)
+        raise error
+
+    monkeypatch.setattr(modelspell, 'complete', complete)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        response = executor.submit(request, server, '/api/generate',
+                                   {'model': 'test/model', 'instruction': 'Echo'})
+        assert started.wait(3)
+        closing = executor.submit(server.close)
+        assert response.result(5) == (502, {'error': 'Cancelled'})
+        closing.result(5)
+    assert handles[0] is server.model_cancel
+    assert server.session.snapshot()['active_id'] is None
+    assert server.session.snapshot()['attempts'][-1]['status'] == 'failed'
+    assert 'private partial reply' not in (server.session.directory / 'journal.json').read_text()

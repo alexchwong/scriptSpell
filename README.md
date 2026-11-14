@@ -98,20 +98,35 @@ describes model dispatch, runtime outcomes, cancellation and AgentWiz responsibi
 
 ## Authoring workflow and local playground
 
-The revision workflow uses a caller-supplied `dispatch(materials, settings)` function.
-Send the system/user messages and response schema from `materials` using your provider
-adapter. Return an object with `text`, `finish_reason` and `truncated` attributes, such
-as a modelSpell completion result. scriptSpell itself needs no API key or model provider.
-Settings are `model` plus optional `temperature` (0–2), `reasoning` (off, low, medium,
-or high), and `max_tokens` (positive integer). Omitted settings use provider defaults.
-The journal records requested settings. Provider application of those settings is unverified.
+The revision workflow accepts a caller-owned `dispatch(materials, settings)`.
+Use `model_messages(materials)` to render its system and user messages, including the
+response schema. Each request includes `materials["request_context"]` with a stage
+and a one-based content attempt, so a host can authorize each send.
+
+Use `settings={}` when the dispatcher already has a target and options. Injected
+dispatch still accepts the legacy `model` mapping with optional `temperature`,
+`reasoning` and `max_tokens`. That mapping uses `validate_model_settings()`.
+Other mappings pass through to the injected dispatcher. Supply
+`requested_settings` separately to record the requested controls in a session.
+
+An injected reply supplies `text`, `finish_reason` and `truncated`. A complete
+reply has a `stop` finish and no truncation. Native LM Studio results can have
+`finish_reason=None` with `transport="lmstudio_native"` and `truncated=False`.
+Pass through the original result to preserve that metadata.
+
+For standalone use, install modelSpell and bind its completion target once.
 
 ```python
+from modelspell import Endpoint
 from scriptspell import AuthoringSession
+from scriptspell.modelspell_adapter import make_dispatch
 
 session = AuthoringSession("runs")
-settings = {"model": "provider/model", "max_tokens": 4096}
-revision = session.generate(None, dispatch, settings, "Trim text.", example_count=3)
+settings = {}
+requested = {"model": "provider/model", "max_tokens": 4096}
+dispatch = make_dispatch(Endpoint("openrouter"), requested["model"], options={"max_tokens": 4096})
+revision = session.generate(None, dispatch, settings, "Trim text.", example_count=3,
+                            requested_settings=requested)
 reports = session.run(revision)
 failed = [r["example_id"] for r in reports if r["status"] == "mismatch"]
 if failed:
@@ -121,6 +136,13 @@ if failed:
     # revision = session.decide(revision, attempt_id, True)
 print(session.export(revision))
 ```
+
+The base wheel can be used without modelSpell. The standalone adapter imports it
+when binding. On modelSpell 0.3.0, binding checks route settings and JSON
+encoding of provider options. The SDK checks the model argument and timeout before
+sending. The playground and paid preset and staged CLIs use Managed routing with zero
+transport retries. See the [integration guide](docs/application-integration.md) for
+the injected call and provider selection.
 
 Generation requests Python and all 1–20 examples together, with one retry for a format error. Use `examples=[{"inputs":
 ..., "outputs": ...}]` for structured examples the workflow can verify against the
@@ -224,7 +246,8 @@ Import from `scriptspell`; underscore modules and codec details are private.
 | `run_examples(draft, *, cancel=None)` | Local Monty suite with typed expected/actual values and per-case status. |
 | `correct_expected(…)`, `improve_python(…)`, `edit_example(…)` | Return revised drafts. Python repair also returns full candidate results. |
 | `AuthoringSession(root="runs")` | Serialize revision edits, track model attempts and test results, and export Python. |
-| `validate_model_settings(model, …)` | Validate provider-neutral authoring controls before dispatch. |
+| `model_messages(materials)` | Render ordered system and user messages for a dispatcher. |
+| `validate_model_settings(model, …)` | Validate and normalize the legacy model settings mapping. |
 | `validate_proposal(proposal)` | Check proposal shape and source policy; returns an outcome dictionary. |
 | `validate_source(source)` | Static source-policy check; no submitted code execution. |
 | `run(source, inputs, output_names, *, limits=None, cancel=None)` | Synchronous invocation; accepted `values` exist only on `ok`. |

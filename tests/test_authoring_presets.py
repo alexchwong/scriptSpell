@@ -35,7 +35,7 @@ def test_batch_continues_after_mismatch_and_reports_exact_values(runner, monkeyp
     requests = []
 
     def complete(endpoint, model, messages, **settings):
-        requests.append((model, messages[1].content.split('\n\nExample count')[0].removeprefix('Task\n\n'), settings))
+        requests.append((model, messages[1]['content'].split('\n\nExample count')[0].removeprefix('Task\n\n'), settings))
         pair = dict(example_input={'n': 9007199254740993}, expected_output={'out': 9007199254740993})
         other = dict(example_input={'n': 2}, expected_output={'out': 1 if len(requests) == 1 else 2})
         payload = dict(source='def transform(inputs):\n    return {"out": inputs["n"]}',
@@ -137,3 +137,28 @@ def test_preset_07_contract_guidance_matches_task_without_changing_schema():
     guidance = contract['guidance']
     assert 'zero is invalid' in guidance and 'zero is valid' in guidance
     assert 'field order id, quantity, unit_price_cents' in guidance
+
+
+@pytest.mark.parametrize('status', [429, 503])
+def test_saved_provider_error_only_keeps_allowlisted_facts(runner, monkeypatch, tmp_path, status):
+    key = 'private-credential'
+    monkeypatch.setenv('OPENROUTER_API_KEY', key)
+    calls = []
+
+    def completion(endpoint, model, messages, **options):
+        calls.append(options)
+        body = json.dumps({'user_id': 'private-marker', 'error': {
+            'code': status, 'message': 'private-marker', 'metadata': {
+                'provider_name': 'Alpha', 'raw': key, 'limit_source': 'upstream_provider_shared_pool',
+                'is_byok': False}}})
+        raise runner.modelspell.BackendError('private-marker', status=status, body=body)
+
+    monkeypatch.setattr(runner.modelspell, 'complete', completion)
+    path = tmp_path / 'report.json'
+    assert runner.main(['--task', '01', '--model', f'host/{key}', '--report', str(path)]) == 2
+    raw = path.read_text()
+    assert key not in raw and 'private-marker' not in raw
+    assert len(calls) == 1 and 'provider' not in calls[0]
+    error = json.loads(raw)['results'][0]['attempts'][0]['provider_error']
+    assert error == {'type': 'BackendError', 'http_status': status, 'code': status,
+                     'provider_name': 'Alpha', 'limit_source': 'upstream_provider_shared_pool', 'is_byok': False}

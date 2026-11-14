@@ -85,7 +85,7 @@ examples:
         return SimpleNamespace(text=next(replies), truncated=False, finish_reason='stop')
 
     monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
-    monkeypatch.setattr(staged, 'dispatch', lambda *args, **kwargs: send)
+    monkeypatch.setattr('scripts.check_authoring_presets.make_dispatch', lambda *args, **kwargs: send)
     path = tmp_path / 'report.json'
     assert staged.main(['--mode', 'two-call', '--examples-only', '--task', '01',
                         '--report', str(path)]) == 0
@@ -188,7 +188,7 @@ examples:
             raise value
         return value
 
-    monkeypatch.setattr(staged, 'dispatch', lambda *args, **kwargs: send)
+    monkeypatch.setattr('scripts.check_authoring_presets.make_dispatch', lambda *args, **kwargs: send)
     assert staged.main(flags + ['--report', str(original)]) == 2
     old = original.read_bytes()
     assert len(calls) == 4
@@ -213,30 +213,50 @@ examples:
     assert report['resumed_from']['sha256'] == staged.digest(old)
 
 
-@pytest.mark.parametrize('error_type, expected_calls', [('shared', 2), ('credits', 1), ('auth', 1),
-                                                         ('timeout', 2), ('unknown_429', 1)])
+@pytest.mark.parametrize('error_type, expected_calls', [
+    ('shared', 2), ('credits', 1), ('auth', 1), ('timeout', 2), ('unknown_429', 1), ('account_429', 1),
+])
 def test_batch_stop_is_bounded(staged, monkeypatch, tmp_path, error_type, expected_calls):
-    errors = {'shared': shared_limit(staged), 'credits': staged.modelspell.BackendError(status=402),
-              'auth': staged.modelspell.AuthError(status=403), 'timeout': staged.modelspell.RequestTimeout(),
-              'unknown_429': staged.modelspell.BackendError(status=429)}
+    sdk = staged.modelspell
+    errors = {'shared': shared_limit(staged), 'credits': sdk.BackendError(status=402),
+              'auth': sdk.AuthError(status=403), 'timeout': sdk.RequestTimeout(),
+              'unknown_429': sdk.BackendError(status=429),
+              'account_429': sdk.BackendError(status=429, body=shared_limit(staged).body.replace(
+                  'upstream_provider_shared_pool', 'account_limit'))}
     attempts, waits = [], []
 
-    def send(materials, settings):
-        attempts.append(materials)
+    def complete(endpoint, model, messages, **options):
+        assert 'provider' not in options and 'rate_limit_retries' not in options
+        attempts.append(messages)
         raise errors[error_type]
 
-    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
-    monkeypatch.setattr(staged, 'dispatch', lambda *args, **kwargs: send)
+    def unexpected_discovery(*args, **kwargs):
+        pytest.fail('unexpected discovery or selection probe')
+
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'secret-test-key')
+    monkeypatch.setattr(sdk, 'complete', complete)
+    monkeypatch.setattr(sdk, 'list_models', unexpected_discovery)
+    monkeypatch.setattr(sdk, 'list_providers', unexpected_discovery)
+    if hasattr(sdk, 'choose_provider'):
+        monkeypatch.setattr(sdk, 'choose_provider', unexpected_discovery)
     monkeypatch.setattr(staged, 'sleep', waits.append)
     report_path = tmp_path / 'report.json'
     assert staged.main(['--mode', 'two-call', '--task', '01', '--task', '02', '--task', '03',
                         '--report', str(report_path)]) == 2
-    report = json.loads(report_path.read_text())
-    assert len(attempts) == report['request_count'] == expected_calls
-    assert len(waits) == expected_calls - 1
+    raw = report_path.read_text()
+    report = json.loads(raw)
+    assert len(attempts) == report['request_count'] == report['http_attempt_max'] == expected_calls
+    assert report['http_retry_count'] == 0
+    assert waits == [2] * (expected_calls - 1)
     assert report['examples_validation']['first_pass_unevaluated'] == expected_calls
+    assert all(result['status'] == 'BLOCKED' and result['request_count'] == 1 for result in report['results'])
+    assert not any(marker in raw for marker in ('private-account', 'private-metadata', 'secret-test-key'))
     if expected_calls == 2:
-        assert attempts[0] != attempts[1]  # Independent task, no automatic call replay.
+        assert attempts[0] != attempts[1]
+    if error_type in ('shared', 'account_429'):
+        facts = report['results'][0]['attempts'][0]['provider_error']
+        assert facts['provider_name'] == 'Parasail'
+        assert facts['limit_source'] == ('upstream_provider_shared_pool' if error_type == 'shared' else 'account_limit')
 
 
 @pytest.mark.parametrize('kind', ['interrupt', 'cancel'])
@@ -249,7 +269,7 @@ def test_interrupt_persists_partial_attempt(staged, monkeypatch, tmp_path, kind)
         raise error
 
     monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
-    monkeypatch.setattr(staged, 'dispatch', lambda *args, **kwargs: send)
+    monkeypatch.setattr('scripts.check_authoring_presets.make_dispatch', lambda *args, **kwargs: send)
     path = tmp_path / 'report.json'
     assert staged.main(['--mode', 'two-call', '--task', '01', '--task', '02', '--report', str(path)]) == 130
     report = json.loads(path.read_text())
@@ -378,3 +398,64 @@ def test_fixed_parse_checks_independent_trimming(staged, trim_parts, status):
     draft = dict(source=source, unmet_requirements=[],
                  examples=[dict(example_input=inputs, expected_output=expected)])
     assert fixed_verification('06', draft)['status'] == status
+
+
+@pytest.mark.parametrize('runner_name', ['check_authoring_staged', 'check_authoring_presets'])
+def test_cli_preflights_before_banner_and_report(staged, runner_name, monkeypatch, tmp_path, capsys):
+    from importlib import import_module
+    runner = import_module(f'scripts.{runner_name}')
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('unexpected completion or discovery')
+
+    monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
+    monkeypatch.setattr(staged.modelspell, 'complete', unexpected)
+    monkeypatch.setattr(staged.modelspell, 'list_models', unexpected)
+    monkeypatch.setattr(staged.modelspell, 'list_providers', unexpected)
+    existing = tmp_path / 'existing.json'
+    absent = tmp_path / 'absent.json'
+    existing.write_bytes(b'previous report\n')
+    for path, flags in ((absent, ['--dry-run']), (absent, []), (existing, [])):
+        with pytest.raises(SystemExit) as error:
+            runner.main(['--temperature', '5', '--report', str(path), *flags])
+        assert error.value.code == 2
+        output = capsys.readouterr()
+        assert 'temperature' in output.err and not output.out
+        assert not absent.exists() and existing.read_bytes() == b'previous report\n'
+
+
+def test_same_version_modelspell_source_change_refuses_resume(staged, monkeypatch, tmp_path):
+    package = tmp_path / 'modelspell'
+    routes = package / 'routes'
+    routes.mkdir(parents=True)
+    init = package / '__init__.py'
+    source = routes / 'route.py'
+    init.write_text('# modelSpell\n')
+    source.write_text('# original route\n')
+    monkeypatch.setattr(staged.modelspell, '__file__', str(init))
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-only-key')
+    sends = []
+
+    def complete(*args, **kwargs):
+        sends.append(args)
+        raise staged.modelspell.BackendError(status=429)
+
+    monkeypatch.setattr(staged.modelspell, 'complete', complete)
+    first, resumed = tmp_path / 'first.json', tmp_path / 'resumed.json'
+    flags = ['--task', '01']
+    assert staged.main([*flags, '--report', str(first)]) == 2
+    manifest = json.loads(first.read_bytes())['manifest']
+    assert manifest['modelspell_source_sha256'] == staged.digest_json({
+        '__init__.py': staged.digest(init.read_bytes()), 'routes/route.py': staged.digest(source.read_bytes())})
+    source.write_text('# changed route\n')
+    with pytest.raises(SystemExit):
+        staged.main([*flags, '--resume', str(first), '--report', str(resumed)])
+    assert len(sends) == 1 and not resumed.exists()
+
+    source.write_text('# original route\n')
+    legacy = json.loads(first.read_bytes())
+    del legacy['manifest']['modelspell_source_sha256']
+    first.write_text(json.dumps(legacy))
+    with pytest.raises(SystemExit):
+        staged.main([*flags, '--resume', str(first), '--report', str(resumed)])
+    assert len(sends) == 1 and not resumed.exists()

@@ -19,4 +19,19 @@ assert scriptspell.validate_proposal(proposal)['outcome'] == 'ok'
 result = scriptspell.run(proposal['source'], {'vaf': Decimal('0.049999999999999999')}, ['eligible'])
 assert result['outcome'] == 'ok', result
 assert result['values'] == {'eligible': False}, result
+
+interface = {'inputs': {'value': 'float'}, 'outputs': {'half': 'float'}}
+flow = scriptspell.YamlAuthoring('Halve the input value.', interface=interface)
+assert '<float value>' in flow.materials('examples')['user']
+flow.accept('examples', '''\
+interface:
+  inputs: {value: float}
+  outputs: {half: float}
+examples:
+  - inputs: {value: 3.0}
+    outputs: {half: 1.5}
+''')
+flow.accept('python', 'def transform(inputs):\n    return {"half": inputs["value"] / 2}')
+results = scriptspell.run_examples(flow.draft())
+assert [case['status'] for case in results] == ['pass'], results
 print('smoke ok:', scriptspell.__file__)

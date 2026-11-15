@@ -152,7 +152,7 @@ also pass `settings={}`; only the legacy four-field shape uses
 `validate_model_settings()`. Share `model_messages()` for preview and transport.
 Keep modelSpell lazy in the optional adapter. The published 0.3.0 pin checks
 generation settings and JSON encoding of provider options at binding. The SDK
-checks the model argument and timeout before sending. The candidate uses
+checks the model argument and timeout before sending. The modelSpell 0.4.0 candidate uses
 `check_completion()` for offline preflight. Keep native LM Studio's result
 transport field so `finish_reason=None` can be checked alongside truncation.
 
@@ -185,7 +185,8 @@ benchmark. Both YAML modes share the same validator. Report all verifiable
 contract errors after a successful parse. When parsing fails, report the
 available syntax diagnostics. The model-only retry is capped at one and carries
 the exact rejected reply. Use the existing Monty source and execution paths
-after YAML acceptance.
+after YAML acceptance. The example templates ask for working comments between
+inputs and outputs. YAML parsing discards those comments before the Python stage.
 
 Preview System and User messages before sending. Copy the full System message
 to include a response schema when one applies. The render-only CLI uses the
@@ -372,10 +373,11 @@ builds, verifies and smoke-tests the installed wheel. `tests.yml` is also reusab
 the release workflow. Do not add live-model calls to either workflow.
 
 `python scripts/build_release.py --smoke` builds from **committed HEAD**, never the
-working tree. It checks exact package contents, version/license metadata and NEWS;
-installs the wheel and its dependencies in a fresh environment; and tests authoring,
-validation and real execution outside the checkout. Dependency installation may need
-index access. Use `python -m build --wheel` for an uncommitted development wheel.
+working tree. It checks exact package contents, version/license metadata and NEWS.
+The smoke test installs the wheel and its dependencies in a fresh environment and
+exercises legacy JSON authoring, Two-call YAML and real execution outside the checkout.
+Dependency installation may need index access. Use `python -m build --wheel` for an
+uncommitted development wheel.
 Only the package, license and distribution metadata ship in the release wheel.
 
 `release.yml` follows modelSpell: a main push (or manual dispatch on main) runs CI,

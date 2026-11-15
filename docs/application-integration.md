@@ -14,7 +14,7 @@ host from submitted code and no requirement to use AgentWiz or modelSpell.
 | Testing | Execute each supplied test through `run` | Supply cases and expected answers, check contracts/results; keep held-out answers out of repair prompts |
 | Execution | Monty invocation, exact-value codec, limits, cancellation, worker cleanup | Admission/concurrency, UI background task, overall budgets and downstream routing |
 | Privacy | No guest host capabilities; generic runtime diagnostics | Local-only labels, cloud eligibility, release Gate, approved prompt content, log redaction |
-| Storage | None | Block IDs, revisions, source, descriptions, evidence, atomic publication and audit trail |
+| Storage | Optional local draft journal via `AuthoringSession` | Block IDs, published revisions, source, descriptions, evidence, atomic publication and audit trail |
 
 A prompt is not a security control. Only provide authoring context approved for the
 selected model. Source itself can contain identifiers. A script's successful execution
@@ -62,8 +62,8 @@ draft = generate_draft(dispatch, {}, "Trim text.")
 ```
 
 The factory imports optional modelSpell when called and snapshots option containers
-before offline preflight. The current candidate uses `check_completion()`. The
-published 0.3.0 pin uses `check_settings()` and checks the JSON encoding of a
+before offline preflight. The modelSpell 0.4.0 candidate exposes `check_completion()`. The
+published modelSpell 0.3.0 pin uses `check_settings()` and checks the JSON encoding of a
 non-null provider policy at binding. With that pin the SDK checks the model argument
 and timeout before sending. For OpenRouter pinning, authorize and resolve selection
 using the [modelSpell selection example](https://github.com/alexchwong/modelSpell/blob/7e23d9d15076e53336f556bffebe83341a6ee9b3/examples/batch_selection.py)
@@ -71,8 +71,31 @@ and pass `selection.policy` as `options["provider"]`. Use a caller-owned dispatc
 for retry controls and backend-specific `extra` fields. The playground and paid
 preset and staged CLIs use Managed routing and zero transport retries.
 
-The manual proposal API remains available for applications that own the full
-authoring loop.
+### YAML authoring
+
+Use the same dispatcher for the YAML workflow. Pass `interface` when the application
+already owns the input and output names and types.
+
+```python
+from scriptspell import YamlAuthoring, run_examples
+
+interface = {"inputs": {"text": "str"}, "outputs": {"clean_text": "str"}}
+flow = YamlAuthoring("Trim surrounding whitespace from text into clean_text.",
+                     count=3, interface=interface)
+flow.generate("examples", dispatch, {})
+flow.generate("python", dispatch, {})
+draft = flow.draft()
+results = run_examples(draft)
+```
+
+Between calls, an application can display `flow.examples_yaml()` for review and
+validate edits with `flow.accept("examples", edited_yaml)`. The Python stage receives
+the accepted interface and first pair. The suite runs every pair. With `one_shot=True`,
+call `generate("one-shot", dispatch, {})` once to get both examples and source. Either
+workflow can send one YAML format correction. Check the generated expectations and
+run independent cases before saving the source.
+
+### Manual JSON proposal API
 
 1. Resolve the model role and authorize context before prompt preparation/dispatch.
 2. If a host contract is available, convert it into a JSON-serializable `interface` description containing
@@ -108,8 +131,8 @@ as strings with a type explanation. Do not silently coerce them to binary floats
 The proposal object must contain exactly `source` (string, at most 65,536 characters),
 `summary` (string, at most 4,096 characters), `assumptions` and `unmet_requirements`
 (lists of at most 20 strings, each at most 4,096 characters), plus `example_input` and
-`expected_output` dictionaries. These are required in the SAME model response as source,
-in the product API and developer UI alike. Code-only replies are rejected. The production
+`expected_output` dictionaries. The manual API and single-example Compatibility JSON
+require these fields in the same model response as source. The production
 prompt preserves any example values supplied in the task or `examples`, generating missing
 parts. Context `examples` continue to use the existing `inputs`/`outputs` pair format.
 
@@ -192,7 +215,8 @@ consumer with direct URL dependencies, add this to its pyproject:
 allow-direct-references = true
 ```
 
-No modelSpell dependency is needed in scriptSpell itself.
+Install modelSpell separately when using `make_dispatch()` or a modelSpell-backed
+dispatcher. The base wheel supports caller-owned dispatch without modelSpell.
 
 `scriptspell.__version__` is the library SemVer release, `profile()['profile']` identifies
 the language contract, `profile()['codec']` the exact-value protocol, and authoring

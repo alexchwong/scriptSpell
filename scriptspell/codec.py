@@ -1,5 +1,6 @@
 """Private bounded typed transport. No pickle, arbitrary objects or float coercion."""
 import json
+from math import isfinite
 from decimal import Decimal, InvalidOperation
 
 
@@ -24,6 +25,11 @@ def pack(value, limits):
             if v.bit_length() > 14280:
                 raise ValueError('number_limit')
             out = ['i', str(v)]
+            budget[1] += len(out[1])
+        elif t is float:
+            if not isfinite(v):
+                raise ValueError('number_limit')
+            out = ['f', repr(v)]
             budget[1] += len(out[1])
         elif t is Decimal:
             if not v.is_finite() or len(v.as_tuple().digits) > 4300 or abs(v.as_tuple().exponent) > 999999:
@@ -69,6 +75,14 @@ def unpack(node):
     value=node[1]
     if tag=='s' and type(value) is str:return value
     if tag=='b' and type(value) is bool:return value
+    if tag == 'f' and type(value) is str and len(value) <= 32:
+        try:
+            result = float(value)
+        except ValueError:
+            raise ValueError('invalid_transport') from None
+        if not isfinite(result):
+            raise ValueError('invalid_transport')
+        return result
     if tag in ('i','d') and type(value) is str:
         if len(value)>4400:raise ValueError('invalid_transport')
         if tag=='i':

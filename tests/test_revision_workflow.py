@@ -157,3 +157,43 @@ def test_generation_retries_format_only_once(second_valid, caplog):
     assert 'exactly 2 objects' in retry[0]['system']
     assert invalid not in retry[0]['system']
     assert 'Retrying scriptSpell draft after invalid_json' in caplog.text
+
+
+def test_requested_metadata_projection_preserves_original_dispatch_failure(tmp_path):
+    session = AuthoringSession(tmp_path)
+    unsafe_settings = {'model': object(), 'temperature': float('nan'), 'reasoning': True,
+                       'max_tokens': 10**5000, 'provider': {'private': 'secret'}, 'cancel': object()}
+    failure = RuntimeError('original dispatch failure')
+
+    def fail(materials, settings):
+        assert settings == {}
+        raise failure
+
+    with pytest.raises(RuntimeError) as raised:
+        session.generate(None, fail, {}, 'Trim', requested_settings=unsafe_settings)
+    assert raised.value is failure
+    attempt_id = session.snapshot()['attempts'][-1]['id']
+    attempt = session.attempt(attempt_id)
+    assert attempt['status'] == 'failed' and attempt['requested_settings'] is None
+
+    draft = generate_draft(reply(proposal(**case(' x ', 'x'))), {}, 'Trim')
+    session.record_authored(None, draft, settings=dict(unsafe_settings, temperature=None))
+    assert session.snapshot()['revision']['requested_settings'] == {'temperature': None}
+    assert 'secret' not in (session.directory / 'journal.json').read_text()
+
+
+def test_session_uses_requested_metadata_for_revision_actions(tmp_path):
+    session = AuthoringSession(tmp_path)
+    initial = session.generate(None, reply(proposal(**case(' x ', 'y'))), {'model': ' m '}, 'Trim')
+    assert session.snapshot()['revision']['requested_settings'] == dict(
+        model='m', temperature=None, reasoning=None, max_tokens=None)
+    case_id = session.snapshot()['revision']['draft']['examples'][0]['id']
+    correct = session.correct(initial, reply({'expected_output': {'out': 'x'}}), {}, case_id, 'Fix',
+                              requested_settings={'temperature': None, 'max_tokens': 2**53})
+    assert session.attempt(correct)['requested_settings'] == {'temperature': None}
+
+    session.run(initial)
+    repair_source = "def transform(inputs):\n    return {'out': 'y'}"
+    attempt_id = session.improve(initial, reply({'source': repair_source}), {'model': ' m ', 'top_p': 0.5},
+                                 [case_id], requested_settings={'max_tokens': 2**53 - 1, 'reasoning': 'off'})
+    assert session.attempt(attempt_id)['requested_settings'] == {'max_tokens': 2**53 - 1, 'reasoning': 'off'}

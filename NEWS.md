@@ -1,5 +1,17 @@
 # NEWS
 
+## 0.3.0
+
+- Added Two-call YAML and One-shot YAML authoring in the playground and headless API.
+- YAML generation retries once with the exact rejected reply and available diagnostics.
+- Applications with a preconfigured model dispatcher can pass empty per-call settings.
+  The optional `make_dispatch()` adapter binds a modelSpell target for standalone use.
+- Added finite float transport, literals, conversion and true division. Example comparisons
+  use a tolerance only for pairs of floats.
+- Presets now describe inputs, outputs and observable edge-case behavior explicitly.
+- New YAML prompts use mappings for example variables, with support for saved list-form replies.
+- The staged benchmark reports agreement and independent correctness separately and can resume from accepted examples.
+
 ## 0.2.1
 
 - Generate Python and up to 20 examples together, then run them through Monty.

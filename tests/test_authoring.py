@@ -51,3 +51,45 @@ def test_example_validation_refuses_unsupported_or_unbounded_data():
     for value in ({}, {'': 1}, {'x' * 129: 1}, {str(i): i for i in range(101)}):
         assert validate_proposal(candidate(expected_output=value))['outcome'] == 'invalid_proposal'
     assert validate_proposal(candidate(example_input={'vaf': '0.05', 'count': 9007199254740993}))['outcome'] == 'ok'
+
+
+IMPORT_RULE = 'never use bare `Decimal` without an import'
+
+
+def test_explicit_import_rule_reaches_every_code_writing_prompt():
+    import json
+    from scriptspell import YamlAuthoring
+    from scriptspell.staged import StagedAuthoring
+    from scriptspell.workflow import improve_python
+    examples = ('interface:\n  inputs:\n    - n: int\n  outputs:\n    - out: int\n'
+                'examples:\n  - inputs:\n      - n: 1\n    outputs:\n      - out: 2\n')
+    two_call = YamlAuthoring('Double n', 1)
+    two_call.accept('examples', examples)
+    one_shot = YamlAuthoring('Double n', 1, one_shot=True)
+    legacy = StagedAuthoring('Double n', 1, {'inputs': {'n': 'integer'}, 'outputs': {'out': 'integer'}})
+    legacy.accept('inputs', json.dumps({'examples': [{'n': 1}]}))
+    legacy.accept('expectations', json.dumps({'outputs': {'1': {'out': 2}}}))
+    captured = []
+
+    class Stop(Exception):
+        pass
+
+    def dispatch(materials, settings):
+        captured.append(materials)
+        raise Stop
+    draft = dict(source='def transform(inputs):\n    return {"out": 0}', instruction='Double n',
+                 examples=[dict(id='a', example_input={'n': 1}, expected_output={'out': 2})])
+    reports = [dict(example_id='a', status='mismatch', outcome='ok', actual={'out': 0})]
+    try:
+        improve_python(dispatch, {'model': 'test/model'}, draft, reports, ['a'])
+    except Stop:
+        pass
+    systems = {'yaml-python': two_call.materials('python')['system'],
+               'yaml-one-shot': one_shot.materials('one-shot')['system'],
+               'python': legacy.materials('python')['system'],
+               'repair': captured[0]['system']}
+    for name, system in systems.items():
+        assert IMPORT_RULE in system, name
+        assert system.count(IMPORT_RULE) == 1, name
+        assert profile()['profile'] in system, name
+    assert profile()['profile'] == 'scriptspell-pure-v5'

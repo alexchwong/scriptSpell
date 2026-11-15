@@ -1,8 +1,9 @@
 """Nonexecuting AST policy, run only inside the bounded trusted driver."""
 import ast
+from math import isfinite
 from .profile import BUILTINS, DATA_METHODS, IMPORTS, FORBIDDEN_NAMES, RESERVED_NAMES
 
-ALLOWED = {getattr(ast, n) for n in '''Module NamedExpr Match match_case MatchValue MatchSingleton MatchSequence MatchMapping MatchStar MatchAs MatchOr FunctionDef Lambda arguments arg Return Assign AnnAssign AugAssign Expr If For While Break Continue Pass Raise Assert Try ExceptHandler Call Name Load Store Constant List Dict Tuple Set Subscript Slice Attribute BinOp UnaryOp BoolOp Compare IfExp ListComp DictComp SetComp GeneratorExp comprehension keyword Starred JoinedStr FormattedValue Add Sub Mult FloorDiv Mod BitAnd BitOr BitXor LShift RShift Invert UAdd USub Not And Or Eq NotEq Lt LtE Gt GtE In NotIn Is IsNot Import ImportFrom alias'''.split()}
+ALLOWED = {getattr(ast, n) for n in '''Module NamedExpr Match match_case MatchValue MatchSingleton MatchSequence MatchMapping MatchStar MatchAs MatchOr FunctionDef Lambda arguments arg Return Assign AnnAssign AugAssign Expr If For While Break Continue Pass Raise Assert Try ExceptHandler Call Name Load Store Constant List Dict Tuple Set Subscript Slice Attribute BinOp UnaryOp BoolOp Compare IfExp ListComp DictComp SetComp GeneratorExp comprehension keyword Starred JoinedStr FormattedValue Add Sub Mult Div FloorDiv Mod BitAnd BitOr BitXor LShift RShift Invert UAdd USub Not And Or Eq NotEq Lt LtE Gt GtE In NotIn Is IsNot Import ImportFrom alias'''.split()}
 
 
 def private(name):
@@ -89,7 +90,7 @@ def check(source, limits):
                 issue(n,'module_reference_denied',n.id,'Imported modules may only be used through their advertised qualified members.')
             if private(n.id) or (n.id in FORBIDDEN_NAMES and not (n.id=='compile' and regex_compile_bound)):
                 issue(n,'name_denied',n.id,'Name is unavailable in the pure data profile.')
-            elif isinstance(n.ctx,ast.Load) and n.id not in BUILTINS|local_bindings and n.id!='Decimal':
+            elif isinstance(n.ctx,ast.Load) and n.id not in BUILTINS|local_bindings:
                 issue(n,'name_denied',n.id,'Unknown name; use declared bindings or advertised builtins/imports.')
             elif isinstance(n.ctx,ast.Store) and n.id in RESERVED_NAMES:
                 issue(n,'reserved_name',n.id)
@@ -102,13 +103,14 @@ def check(source, limits):
                 issue(n,'attribute_denied',n.attr,'Attribute is unavailable; use an advertised data method or module member.')
             elif isinstance(n.ctx,ast.Store):issue(n,'attribute_write_denied',n.attr)
         elif isinstance(n,ast.Call):
-            if isinstance(n.func,ast.Name) and n.func.id not in BUILTINS|local_bindings and n.func.id!='Decimal':
+            if isinstance(n.func,ast.Name) and n.func.id not in BUILTINS|local_bindings:
                 issue(n,'call_denied',n.func.id,'Unknown callable; use a defined function or an advertised builtin/import.')
             if isinstance(n.func,ast.Name) and (private(n.func.id) or (n.func.id in FORBIDDEN_NAMES and not (n.func.id=='compile' and regex_compile_bound))):
                 issue(n,'call_denied',n.func.id,'Call is unavailable in the pure data profile.')
             elif not isinstance(n.func,(ast.Name,ast.Attribute,ast.Lambda,ast.Subscript,ast.Call)):
                 issue(n,'call_denied',type(n.func).__name__)
-        elif isinstance(n,ast.Constant) and type(n.value) not in (str,int,bool,bytes,type(None)):
+        elif isinstance(n,ast.Constant) and (type(n.value) not in (str,int,float,bool,bytes,type(None))
+                                            or (type(n.value) is float and not isfinite(n.value))):
             issue(n,'literal_denied')
     return issues
 

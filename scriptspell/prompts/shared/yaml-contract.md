@@ -1,0 +1,11 @@
+- interface must contain exactly two keys, inputs and outputs. Each must be a mapping from variable name to data type.
+- Adopt any input or output parameters specified by the user. Preserve their names, types, structure, and constraints. Infer reasonable choices only for unspecified details.
+- Express each type as a YAML string, such as str, int, bool, float, Decimal, None, list[str], or dict[str, float]. Plain list and dict allow heterogeneous values. Use a union such as str | None when appropriate.
+- Use finite numbers. For Decimal, quote the exact decimal text, such as "0.125". For float, use a floating-point YAML value such as 1.25 or 1.0. Use lowercase true, false and null. Quote strings that look like numbers, booleans or null.
+- examples must be a list of exactly the number requested. If the number is missing, assume one.
+- Each example must contain exactly two keys, inputs and outputs. Each contains a mapping from variable name to value. An empty list value is `[]`. Use `{}` for a side with no variables.
+- Include every declared variable exactly once on its respective side. Values must match their declared types.
+- Work each example out before answering it. Inside each example, directly above its `outputs` key, write YAML comment lines starting with `#` that apply the task rules to that example's inputs one item at a time. Then write outputs that match the working exactly.
+- Keep each example small enough to work out by hand: a few items, small numbers and one main point. Write each name, ID and number the same way everywhere it appears within an example.
+- Generate varied, plausible cases. Include a representative case and, when requesting more than one, exercise distinct task-relevant edge cases where possible. Vary behavior, not just names or numbers. Keep structure and types consistent across cases.
+- Use plain YAML data without tags, anchors, aliases or merge keys. Return only the YAML document, without Markdown fences. The working comments are the only commentary allowed.

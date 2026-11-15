@@ -11,8 +11,9 @@ passes that source and new inputs to scriptSpell to execute. Running an approved
 requires no model call.
 
 scriptSpell supplies the tested language profile, authoring prompts, static checks,
-exact-value transport and supervised Monty execution. It has **no model client, UI,
-server, persistence or AgentWiz/modelSpell dependency**.
+typed transport and supervised Monty execution. `AuthoringSession` can also keep a
+local draft journal. The wheel runs headlessly, with model dispatch supplied by the
+application or by the optional modelSpell adapter.
 
 ## Install
 
@@ -53,7 +54,7 @@ else:
 
 Scripts define `transform(inputs)` and return a dictionary with exactly the requested
 output names. Inputs and outputs use exact built-in dict/list/str/bool/int/None and
-finite Decimal values. No implicit bytes/tuple/set/float/date/custom-object conversion
+finite float and Decimal values. No implicit bytes/tuple/set/date/custom-object conversion
 is performed on output. The application validates its own field types and business rules.
 
 ## Author a transformation with a model
@@ -98,20 +99,35 @@ describes model dispatch, runtime outcomes, cancellation and AgentWiz responsibi
 
 ## Authoring workflow and local playground
 
-The revision workflow uses a caller-supplied `dispatch(materials, settings)` function.
-Send the system/user messages and response schema from `materials` using your provider
-adapter. Return an object with `text`, `finish_reason` and `truncated` attributes, such
-as a modelSpell completion result. scriptSpell itself needs no API key or model provider.
-Settings are `model` plus optional `temperature` (0–2), `reasoning` (off, low, medium,
-or high), and `max_tokens` (positive integer). Omitted settings use provider defaults.
-The journal records requested settings. Provider application of those settings is unverified.
+The revision workflow accepts a caller-owned `dispatch(materials, settings)`.
+Use `model_messages(materials)` to render its system and user messages, including the
+response schema. Each request includes `materials["request_context"]` with a stage
+and a one-based content attempt, so a host can authorize each send.
+
+Use `settings={}` when the dispatcher already has a target and options. Injected
+dispatch still accepts the legacy `model` mapping with optional `temperature`,
+`reasoning` and `max_tokens`. That mapping uses `validate_model_settings()`.
+Other mappings pass through to the injected dispatcher. Supply
+`requested_settings` separately to record the requested controls in a session.
+
+An injected reply supplies `text`, `finish_reason` and `truncated`. A complete
+reply has a `stop` finish and no truncation. Native LM Studio results can have
+`finish_reason=None` with `transport="lmstudio_native"` and `truncated=False`.
+Pass through the original result to preserve that metadata.
+
+For standalone use, install modelSpell and bind its completion target once.
 
 ```python
+from modelspell import Endpoint
 from scriptspell import AuthoringSession
+from scriptspell.modelspell_adapter import make_dispatch
 
 session = AuthoringSession("runs")
-settings = {"model": "provider/model", "max_tokens": 4096}
-revision = session.generate(None, dispatch, settings, "Trim text.", example_count=3)
+settings = {}
+requested = {"model": "provider/model", "max_tokens": 4096}
+dispatch = make_dispatch(Endpoint("openrouter"), requested["model"], options={"max_tokens": 4096})
+revision = session.generate(None, dispatch, settings, "Trim text.", example_count=3,
+                            requested_settings=requested)
 reports = session.run(revision)
 failed = [r["example_id"] for r in reports if r["status"] == "mismatch"]
 if failed:
@@ -122,7 +138,15 @@ if failed:
 print(session.export(revision))
 ```
 
-Generation requests Python and all 1–20 examples together, with one retry for a format error. Use `examples=[{"inputs":
+The base wheel can be used without modelSpell. The standalone adapter imports it
+when binding. On modelSpell 0.3.0, binding checks route settings and JSON
+encoding of provider options. The SDK checks the model argument and timeout before
+sending. The playground and paid preset and staged CLIs use Managed routing with zero
+transport retries. See the [integration guide](docs/application-integration.md) for
+the injected call and provider selection.
+
+The JSON `AuthoringSession.generate()` workflow requests Python and all 1–20 examples
+together, with one retry for a format error. Use `examples=[{"inputs":
 ..., "outputs": ...}]` for structured examples the workflow can verify against the
 response. Supplied parts are preserved by value and incomplete pairs can be filled.
 Examples embedded in prose rely on the model's interpretation. Expected outputs are
@@ -150,8 +174,10 @@ drafts, attempts and test results. Exports use
 recording revision and test status. OpenRouter credentials stay in memory. Use synthetic
 data because model requests send task material to OpenRouter and the journal retains it.
 
-To test the same presets in a batch, run from the checkout with the development extra
-installed and `OPENROUTER_API_KEY` set in your environment.
+To benchmark Compatibility JSON presets, run from the checkout with the development
+extra installed and `OPENROUTER_API_KEY` set in your environment. For either YAML
+mode, use [`scripts.check_authoring_staged`](DEVEL.md#local-verification-of-yaml-authoring)
+with the same preset IDs.
 
 ```sh
 python -m scripts.check_authoring_presets --list
@@ -172,6 +198,44 @@ metadata, and validation details. Rejected source includes any validator issues
 with line numbers. Review the report before sharing because it contains prompt
 and model content.
 
+### YAML authoring in 0.3.0
+
+The playground defaults to **Two-call YAML**. Generate example inputs and their
+expected outputs together, review or paste edited YAML, then generate Python.
+The coding prompt includes the accepted interface and first pair. Monty runs
+all accepted examples and marks the other cases as held back. **One-shot YAML**
+returns both the examples and a Python source block in one reply. All its
+examples are visible to the coder. **Compatibility JSON** uses the legacy workflow.
+
+Both YAML modes validate pasted replies locally. Model-generated YAML gets at
+most one automatic retry for syntax or contract errors, with the rejected reply
+and available diagnostics. The cap is three requests for Two-call and two for
+One-shot. Invalid Python and failed execution are reported separately. Editing
+accepted YAML clears the working script and results. Saved revisions remain
+available. Expected answers generated by a model may still be incorrect.
+
+Headless callers use `YamlAuthoring(instruction, count=1, interface=None, one_shot=False)`.
+Call `materials(stage)` to preview, `accept(stage, reply)` to validate a pasted
+reply, or `generate(stage, dispatch, settings)` to send it with retry handling.
+The stage names are `examples` and `python` for Two-call, or `one-shot` for
+One-shot. Once complete, call `draft()` and pass it to `run_examples(draft)`.
+An optional interface is an object with `inputs` and `outputs` dictionaries
+mapping names to types. New model-facing YAML uses mappings. Saved YAML using lists of single-entry mappings is still accepted.
+
+The YAML loader accepts one bounded document with string mapping keys and
+rejects duplicate keys, anchors, aliases, merge keys, and explicit tags.
+Use lowercase `true`, `false`, and `null`. Words like `yes` and `on`, and
+date-like text, are strings. Quote numeric-looking strings and exact decimals
+declared as `Decimal`. A declared `float` takes a finite floating-point
+value such as `1.0`, with no integer coercion. Supported type declarations are
+`str`, `bool`, `int`, `float`, `Decimal`, `None`, `list`, `dict`,
+`list[T]`, `dict[str, T]`, and unions written with `|`.
+
+Floats pass through the Monty boundary, including in nested values. Example
+comparison uses a relative tolerance of `1e-9` and an absolute tolerance of
+`1e-12` for two floats. Integers, Decimal values, booleans, and strings retain
+exact, type-sensitive comparison. Infinity and NaN are refused at the boundary.
+
 ## Public API
 
 Import from `scriptspell`; underscore modules and codec details are private.
@@ -181,11 +245,13 @@ Import from `scriptspell`; underscore modules and codec details are private.
 | `__version__` | Installed library version; independent of the language/profile identifier. |
 | `profile()` | Fresh capability dictionary: profile, codec, dependency versions, limits and vocabulary. |
 | `prepare_authoring(task, interface=None, examples=(), diagnostics=None)` | Versioned prompts/schema requiring code and examples together; no dispatch or source execution. |
-| `generate_draft(dispatch, settings, instruction, …)` | One request for a draft with stable example IDs. |
+| `generate_draft(dispatch, settings, instruction, …)` | Generate a JSON draft with stable example IDs and up to one format retry. |
+| `YamlAuthoring(…)` | Validate YAML and generate a draft using Two-call or One-shot. |
 | `run_examples(draft, *, cancel=None)` | Local Monty suite with typed expected/actual values and per-case status. |
 | `correct_expected(…)`, `improve_python(…)`, `edit_example(…)` | Return revised drafts. Python repair also returns full candidate results. |
 | `AuthoringSession(root="runs")` | Serialize revision edits, track model attempts and test results, and export Python. |
-| `validate_model_settings(model, …)` | Validate provider-neutral authoring controls before dispatch. |
+| `model_messages(materials)` | Render ordered system and user messages for a dispatcher. |
+| `validate_model_settings(model, …)` | Validate and normalize the legacy model settings mapping. |
 | `validate_proposal(proposal)` | Check proposal shape and source policy; returns an outcome dictionary. |
 | `validate_source(source)` | Static source-policy check; no submitted code execution. |
 | `run(source, inputs, output_names, *, limits=None, cancel=None)` | Synchronous invocation; accepted `values` exist only on `ok`. |
@@ -200,12 +266,11 @@ guest exception messages; callers must apply their own privacy policy to stored 
 
 ## Language and numerical contract
 
-The `scriptspell-pure-v3` vocabulary includes internal sets/tuples/bytes, lambdas,
+The `scriptspell-pure-v4` vocabulary includes internal sets/tuples/bytes, lambdas,
 closures, defaults and annotations, exception handling, f-strings, unpacking and approved
 imports from 14 pure-data modules. The [language catalogue](docs/language-profile.md)
 lists tested APIs and receiver-specific caveats. Authoring prompts derive from this profile.
-Classes, decorators, async, reflection, arbitrary imports, host access, float arithmetic,
-true division and powers are excluded. This is a restricted Python-like language, not
+Classes, decorators, async, reflection, arbitrary imports, host access and powers are excluded. This is a restricted Python-like language, not
 an arbitrary Python script runner.
 
 Integers are bounded to 14,280 bits; Decimal coefficients to 4,300 digits and absolute
@@ -242,7 +307,8 @@ Version 0.2.0 changes the proposal shape (prompt version 4). Consumers of 0.1.x 
 and retain `example_input` and `expected_output`, and update model stand-ins accordingly.
 Use `list(proposal["expected_output"])` for inferred output names; when a host contract is
 supplied, verify those names against it. Model dispatch remains the caller's responsibility.
-The UI and headless applications use this same production contract.
+Version 0.3.0 keeps that contract for the manual proposal API and Compatibility JSON
+in the playground. `run_examples()` accepts drafts from either authoring format.
 
 ## Development and releases
 

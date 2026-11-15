@@ -1,6 +1,7 @@
 """Provider-neutral authoring operations for a multi-example draft."""
 import json
 import logging
+from math import isclose
 import re
 from copy import deepcopy
 from decimal import Decimal
@@ -62,17 +63,20 @@ def same_value(actual, expected):
         return actual.keys() == expected.keys() and all(same_value(v, expected[k]) for k, v in actual.items())
     if type(actual) is list:
         return len(actual) == len(expected) and all(same_value(a, b) for a, b in zip(actual, expected))
+    if type(actual) is float:
+        return isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12)
     return actual == expected
+
+
+def json_display_value(value):
+    if type(value) is Decimal:
+        return {'$decimal': str(value)}
+    raise TypeError('unsupported_display_value')
 
 
 def display_json(value):
     # Used only for display; comparisons use the original typed Monty values.
-    def encode(value):
-        if type(value) is Decimal:
-            return {'$decimal': str(value)}
-        raise TypeError('unsupported_display_value')
-
-    return json.dumps(value, indent=2, ensure_ascii=True, allow_nan=False, default=encode)
+    return json.dumps(value, indent=2, ensure_ascii=True, allow_nan=False, default=json_display_value)
 
 
 def validate_model_settings(model, *, temperature=None, reasoning=None, max_tokens=None):
@@ -88,17 +92,44 @@ def validate_model_settings(model, *, temperature=None, reasoning=None, max_toke
 
 
 def _materials(system, context, schema):
-    user = json.dumps(context, ensure_ascii=True, allow_nan=False)
+    user = json.dumps(context, ensure_ascii=True, allow_nan=False, default=json_display_value)
     if len(user) > 4194304:
         raise AuthoringError('authoring_limit')
     return dict(prompt_version=1, system=system, user=user, response_schema=schema)
 
 
-def _response(dispatch, settings, materials):
-    result = dispatch(materials, dict(settings))
-    if result.truncated or result.finish_reason != 'stop':
+def model_messages(materials):
+    """Render the exact system and user messages for an authoring request."""
+    system = materials['system']
+    schema = materials.get('response_schema')
+    if schema is not None:
+        system += '\nJSON response schema: ' + json.dumps(schema)
+    return [dict(role='system', content=system), dict(role='user', content=materials['user'])]
+
+
+def _legacy_settings(settings):
+    if 'model' in settings and settings.keys() <= {'model', 'temperature', 'reasoning', 'max_tokens'}:
+        return validate_model_settings(**settings)
+    return None
+
+
+def _dispatch_settings(settings):
+    legacy = _legacy_settings(settings)
+    return settings if legacy is None else legacy
+
+
+def _dispatch_text(dispatch, settings, materials, stage, attempt=1):
+    request = dict(materials, request_context=dict(stage=stage, attempt=attempt))
+    reply = dispatch(request, dict(settings))
+    finished = (reply.finish_reason == 'stop' or
+                reply.finish_reason is None and getattr(reply, 'transport', None) == 'lmstudio_native')
+    if reply.truncated or not finished:
         raise AuthoringError('incomplete_model_response')
-    return parse_reply(result.text)
+    return reply.text
+
+
+def _response(dispatch, settings, materials, stage, attempt=1):
+    return parse_reply(_dispatch_text(dispatch, settings, materials, stage, attempt))
 
 
 def parse_reply(text):
@@ -166,11 +197,12 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
         except (ValueError, TypeError, RecursionError, OverflowError):
             raise AuthoringError('invalid_supplied_example') from None
 
-    settings = validate_model_settings(**settings)
+    settings = _dispatch_settings(settings)
     materials = _generation_materials(instruction, example_count, interface, examples)
-    def attempt(request):
+
+    def attempt(request, number):
         try:
-            proposal = _response(dispatch, settings, request)
+            proposal = _response(dispatch, settings, request, 'json_draft', number)
             draft = _validate_draft(proposal, request, instruction, example_count, examples)
         except AuthoringError as exc:
             if on_attempt is not None:
@@ -181,7 +213,7 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
         return draft
 
     try:
-        return attempt(materials)
+        return attempt(materials, 1)
     except AuthoringError as exc:
         if exc.code not in _FORMAT_ERRORS:
             raise
@@ -190,7 +222,7 @@ def generate_draft(dispatch, settings, instruction, *, example_count=1, interfac
     fields = render('one-shot/retry-single') if example_count == 1 else render(
         'one-shot/retry-multiple', count=example_count)
     retry = dict(materials, system=materials['system'] + '\n' + render('one-shot/retry', fields=fields))
-    return attempt(retry)
+    return attempt(retry, 2)
 
 
 def _validate_draft(proposal, materials, instruction, example_count, examples):
@@ -253,6 +285,8 @@ def _check_pair(case, output_names, *, path='$'):
 
 def edit_example(draft, example_id, inputs, expected):
     """Return a draft with one example replaced and the same named output contract."""
+    if 'yaml_examples' in draft:
+        raise AuthoringError('edit_yaml_examples')
     candidate = deepcopy(draft)
     case = _example(candidate, example_id)
     replacement = dict(example_input=inputs, expected_output=expected)
@@ -294,13 +328,15 @@ def _guidance(guidance, *, required=False):
 
 def correct_expected(dispatch, settings, draft, example_id, guidance):
     """Propose a replacement expectation without running or changing the current draft."""
+    if 'yaml_examples' in draft:
+        raise AuthoringError('edit_yaml_examples')
     case = _example(draft, example_id)
     materials = _materials(
         render('stages/correction'),
         dict(instruction=draft['instruction'], input=case['example_input'],
              previous_expected=case['expected_output'], guidance=_guidance(guidance, required=True)),
         _schema({'expected_output': deepcopy(SCHEMA['properties']['expected_output'])}))
-    response = _response(dispatch, validate_model_settings(**settings), materials)
+    response = _response(dispatch, _dispatch_settings(settings), materials, 'correct_expected')
     if type(response) is not dict or set(response) != {'expected_output'}:
         raise AuthoringError('invalid_correction')
     return edit_example(draft, example_id, case['example_input'], response['expected_output'])
@@ -328,7 +364,7 @@ def improve_python(dispatch, settings, draft, reports, example_ids, guidance='',
         render('stages/repair', monty=render('shared/monty'), language=json.dumps(language)),
         dict(instruction=draft['instruction'], source=draft['source'], failures=evidence, guidance=_guidance(guidance)),
         _schema({'source': deepcopy(SCHEMA['properties']['source'])}))
-    response = _response(dispatch, validate_model_settings(**settings), materials)
+    response = _response(dispatch, _dispatch_settings(settings), materials, 'improve_python')
     if type(response) is not dict or set(response) != {'source'}:
         raise AuthoringError('invalid_repair')
     checked = validate_source(response['source'])

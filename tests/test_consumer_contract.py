@@ -59,6 +59,6 @@ def test_host_stop_and_invalid_data_never_publish_values():
     cancelled = ss.run(source, {}, ['out'], cancel=stop)
     assert cancelled['outcome'] == 'cancelled'
     assert 'values' not in cancelled
-    invalid = ss.run(source, {'unsupported': 0.5}, ['out'])
+    invalid = ss.run(source, {'unsupported': float('inf')}, ['out'])
     assert invalid['outcome'] == 'invalid_inputs'
     assert 'values' not in invalid

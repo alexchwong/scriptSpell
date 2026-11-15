@@ -11,10 +11,12 @@ from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 import modelspell
-from scriptspell import AuthoringSession, validate_model_settings
+from scriptspell import AuthoringSession, YamlAuthoring
+from scriptspell.modelspell_adapter import make_dispatch
 from scriptspell.staged import StagedAuthoring
 from scriptspell.workflow import accept_generation_reply, generation_preview
 from . import service
+from .model_errors import provider_error, redact, setup_error
 from .presets import PRESETS
 
 
@@ -39,6 +41,9 @@ class UIServer(ThreadingHTTPServer):
     @property
     def url(self):
         return f'http://127.0.0.1:{self.server_port}/?t={self.token}'
+
+    def credential(self):
+        return self.api_key or os.getenv('OPENROUTER_API_KEY', '').strip()
 
     def endpoint(self):
         return modelspell.Endpoint('openrouter', api_key=self.api_key or None)
@@ -122,10 +127,20 @@ class Handler(BaseHTTPRequestHandler):
                 raise service.UIError('invalid_request')
             self.route(path, body)
         except service.UIError as exc:
-            self.send(400, dict(error=exc.code, details=getattr(exc, 'details', {})))
+            self.send(400, dict(error=exc.code, details=redact(exc.details, self.server.credential())))
         except modelspell.ModelSpellError as exc:
-            # Class names give useful failure categories without echoing credentials or prompts.
-            self.send(502, {'error': type(exc).__name__})
+            # Do not echo provider bodies or exception messages after dispatch begins.
+            error = {'error': type(exc).__name__}
+            details = {}
+            if getattr(exc, 'status', None) == 429:
+                error['error'] = 'BackendError'
+                scope = 'provider' if 'provider_name' in provider_error(exc) else 'account_or_unknown'
+                details.update(reason='rate_limited', scope=scope)
+            if hasattr(exc, 'authoring_first_attempt'):
+                details['first_attempt'] = redact(exc.authoring_first_attempt, self.server.credential())
+            if details:
+                error['details'] = details
+            self.send(502, error)
         except RuntimeError:
             self.send(503, {'error': 'cleanup_failed'})
         except OSError:
@@ -139,18 +154,47 @@ class Handler(BaseHTTPRequestHandler):
         server = self.server
         stage = body.get('stage')
         token = body.get('stage_token')
-        if token is None and stage == 'inputs':
+        mode = body.get('mode')
+        yaml_mode = mode in ('two-call', 'one-shot-yaml')
+        initial_stage = 'one-shot' if mode == 'one-shot-yaml' else ('examples' if yaml_mode else 'inputs')
+        if token is None and stage == initial_stage:
             interface = body.get('interface_text', '')
             if type(interface) is not str:
                 raise service.UIError('invalid_interface')
-            return StagedAuthoring(body.get('instruction'), body.get('example_count', 1),
-                                   service.parse_json(interface) if interface.strip() else None)
+            interface = service.parse_json(interface) if interface.strip() else None
+            if yaml_mode:
+                return YamlAuthoring(body.get('instruction'), body.get('example_count', 1),
+                                     interface=interface, one_shot=mode == 'one-shot-yaml')
+            return StagedAuthoring(body.get('instruction'), body.get('example_count', 1), interface)
         if server.staged is None or token != server.stage_token:
             raise service.UIError('stale_stage')
         flow = server.staged
-        if flow.instruction != body.get('instruction') or flow.count != body.get('example_count'):
+        if (flow.instruction != body.get('instruction') or flow.count != body.get('example_count')
+                or isinstance(flow, YamlAuthoring) != yaml_mode
+                or (yaml_mode and flow.one_shot != (mode == 'one-shot-yaml'))):
             raise service.UIError('stale_stage')
         return flow
+
+    def bind_dispatch(self, body):
+        s = self.server
+        model = body.get('model')
+        if type(model) is not str or not model.strip():
+            raise service.UIError('model_required')
+        model = model.strip()
+        options = {name: body.get(name) for name in ('temperature', 'reasoning', 'max_tokens')}
+        s.model_cancel = modelspell.CancelHandle()
+        if s.closing:
+            s.model_cancel.cancel()
+        try:
+            info = s.models.get(model)
+            if options['reasoning'] in ('low', 'medium', 'high') and getattr(info, 'supports_reasoning', None) is False:
+                raise modelspell.UnsupportedSetting('This model reports no reasoning support')
+            dispatch = make_dispatch(s.endpoint(), info if info is not None else model,
+                                     options=dict(options, timeout=120), cancel=s.model_cancel)
+        except (service.UIError, modelspell.ModelSpellError) as exc:
+            code, reason = setup_error(exc, s.credential())
+            raise service.UIError(code, issues=[reason or code]) from None
+        return dispatch, redact(dict(options, model=model), s.credential())
 
     def route(self, path, body):
         s = self.server
@@ -183,25 +227,36 @@ class Handler(BaseHTTPRequestHandler):
                 raise service.UIError('stale_revision')
             flow = deepcopy(self.staged_flow(body))
             stage = body.get('stage')
-            materials = flow.materials(stage)
             settings = None
+            retry_issues = []
+            yaml_mode = isinstance(flow, YamlAuthoring)
             if 'reply' in body:
-                reply = body['reply']
+                flow.accept(stage, body['reply'])
             else:
-                settings = validate_model_settings(**service.settings(body))
-                s.model_cancel = modelspell.CancelHandle()
-                if s.closing:
-                    s.model_cancel.cancel()
-                response = service.dispatch(s.endpoint(), s.model_cancel, s.models)(materials, dict(settings))
-                if response.truncated or response.finish_reason != 'stop':
-                    raise service.UIError('incomplete_model_response')
-                reply = response.text
-            flow.accept(stage, reply)
+                send, settings = self.bind_dispatch(body)
+                if yaml_mode:
+                    try:
+                        flow.generate(stage, send, {}, on_reject=retry_issues.extend)
+                    except modelspell.ModelSpellError as exc:
+                        if retry_issues:
+                            exc.authoring_first_attempt = retry_issues
+                        raise
+                else:
+                    flow.generate(stage, send, {})
             completed_revision = None
-            if stage == 'python':
-                completed_revision = session.record_authored(revision_id, flow.draft(), staged=True, settings=settings)
+            if stage in ('python', 'one-shot'):
+                completed_revision = session.record_authored(
+                    revision_id, flow.draft(), staged=True, settings=settings,
+                    action=body.get('mode') if yaml_mode else None)
             s.staged = flow
             s.stage_token = secrets.token_urlsafe(16)
+            if yaml_mode:
+                ready = flow.document is not None
+                accepted = flow.examples_yaml() if ready else ''
+                return self.send(200, dict(service.view(session), stage_token=s.stage_token,
+                                           completed_revision=completed_revision, has_inputs=ready,
+                                           has_outputs=ready, accepted_text=accepted,
+                                           retry_issues=redact(retry_issues, s.credential())))
             return self.send(200, dict(service.view(session), stage_token=s.stage_token,
                                        completed_revision=completed_revision,
                                        has_inputs=flow.inputs is not None, has_outputs=flow.outputs is not None,
@@ -213,19 +268,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, service.view(session))
 
         if path in ('/api/generate', '/api/correct', '/api/improve'):
-            s.model_cancel = modelspell.CancelHandle()
-            if s.closing:
-                s.model_cancel.cancel()
-            dispatch = service.dispatch(s.endpoint(), s.model_cancel, s.models)
-            settings = service.settings(body)
+            dispatch, requested_settings = self.bind_dispatch(body)
         if path in ('/api/run', '/api/improve', '/api/decide'):
             s.run_cancel = threading.Event()
             if s.closing:
                 s.run_cancel.set()
         attempt_id = None
         if path == '/api/generate':
-            session.generate(revision_id, dispatch, settings, body.get('instruction'),
-                             example_count=body.get('example_count', 1))
+            session.generate(revision_id, dispatch, {}, body.get('instruction'),
+                             example_count=body.get('example_count', 1), requested_settings=requested_settings)
         elif path == '/api/run':
             session.run(revision_id, cancel=s.run_cancel)
         elif path == '/api/edit':
@@ -233,10 +284,12 @@ class Handler(BaseHTTPRequestHandler):
                          service.parse_json(body.get('input_json')),
                          service.parse_json(body.get('expected_json')))
         elif path == '/api/correct':
-            attempt_id = session.correct(revision_id, dispatch, settings, body.get('example_id'), body.get('guidance'))
+            attempt_id = session.correct(revision_id, dispatch, {}, body.get('example_id'),
+                                         body.get('guidance'), requested_settings=requested_settings)
         elif path == '/api/improve':
-            attempt_id = session.improve(revision_id, dispatch, settings, body.get('example_ids'),
-                                         body.get('guidance', ''), cancel=s.run_cancel)
+            attempt_id = session.improve(revision_id, dispatch, {}, body.get('example_ids'),
+                                         body.get('guidance', ''), cancel=s.run_cancel,
+                                         requested_settings=requested_settings)
         elif path == '/api/decide':
             session.decide(revision_id, body.get('attempt_id'), body.get('accept'), cancel=s.run_cancel)
         elif path == '/api/restore':

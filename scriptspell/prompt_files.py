@@ -35,6 +35,14 @@ def load_presets():
 
 
 
+def load_preset_contracts():
+    index = _index()
+    contracts = json.loads(_read(index['preset_contracts']))
+    if contracts.keys() != {entry['id'] for entry in index['presets']}:
+        raise ValueError('Each preset must have exactly one fixed contract')
+    return contracts
+
+
 def task_text(task, **data):
     sections = [render('shared/task', task=task)]
     for name, value in data.items():

@@ -1,39 +1,16 @@
-"""modelSpell adapter and exact-value display for the browser."""
-import json
-
-import modelspell
-from scriptspell import AuthoringError
+"""Prompt previews and exact-value display for the browser."""
+from scriptspell import AuthoringError, model_messages
 from scriptspell.workflow import display_json, parse_json
 
 UIError = AuthoringError
 
 
 def prompt_preview(materials):
-    system = materials['system']
-    schema = materials.get('response_schema')
-    schema_text = None if schema is None else 'JSON response schema: ' + json.dumps(schema)
-    return dict(system=system, user=materials['user'], schema=schema_text,
-                full_system=system if schema_text is None else system + '\n' + schema_text)
-
-
-def dispatch(endpoint, cancel, models, *, timeout=120):
-    def complete(materials, settings):
-        model = settings.pop('model')
-        modelspell.check_settings(endpoint.kind, **settings)
-        info = models.get(model)
-        if settings['reasoning'] not in (None, 'off') and getattr(info, 'supports_reasoning', None) is False:
-            raise modelspell.UnsupportedSetting('This model reports no reasoning support')
-        prompt = prompt_preview(materials)
-        return modelspell.complete(
-            endpoint, model,
-            [modelspell.Message('system', prompt['full_system']),
-             modelspell.Message('user', prompt['user'])],
-            timeout=timeout, cancel=cancel, **settings)
-    return complete
-
-
-def settings(body):
-    return {name: body.get(name) for name in ('model', 'temperature', 'reasoning', 'max_tokens')}
+    system, user = model_messages(materials)
+    full_system = system['content']
+    original = materials['system']
+    schema = full_system[len(original) + 1:] if materials.get('response_schema') is not None else None
+    return dict(system=original, user=user['content'], schema=schema, full_system=full_system)
 
 
 def _reports(reports):

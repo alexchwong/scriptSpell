@@ -27,6 +27,12 @@ def _ss_encode(v, depth, ancestors, budget):
             raise ValueError('number_limit')
         budget[1] += len(text) + 16
         out = ['i', text]
+    elif t is float:
+        if v - v != 0.0:
+            raise ValueError('number_limit')
+        text = str(v)
+        budget[1] += len(text)
+        out = ['f', text]
     elif t is _ss_Decimal:
         text = str(v)
         if not v.is_finite() or len(v.as_tuple().digits) > 4300 or abs(v.as_tuple().exponent) > 999999:

@@ -42,31 +42,100 @@ uses the playground catalog, modelSpell adapter and public generation/test funct
 Keep it opt-in and use mocked completions in automated tests. The six-task runner above
 uses fixed visible and held-out answers, while preset batches test generated cases.
 
-### Experimental staged authoring benchmark
+### Local verification of YAML authoring
 
-With the development extra installed and `OPENROUTER_API_KEY` set, compare
-the existing preset runner with the staged runner using the same options.
+Run from the repository root with the development extra installed. First run
+the offline checks. These use simulated model replies and exercise Monty locally.
 
 ```sh
-python -m scripts.check_authoring_presets --task 01 --difficulty easy --examples 3
-python -m scripts.check_authoring_staged --task 01 --difficulty easy --examples 3
+python -m pytest -q tests/test_yaml_authoring.py tests/test_authoring_staged.py tests/test_ui.py
 ```
 
-The staged runner requests inputs, expected outputs, and plain Python in three
-separate calls. It makes one request per stage and stops a preset at its first
-failed stage. Monty runs all cases locally. Only the first pair is shown to the
-coder. With one example there are zero held-back cases.
+Both live YAML modes use `scripts.check_authoring_staged`. Set `OPENROUTER_API_KEY`
+in your local shell. Run the same preset, difficulty, model, and example count
+in both modes and keep the reports separate. Start with a single preset.
 
-The staged report defaults to `reports/authoring_staged.json` and includes
-request counts, elapsed times, raw replies, validation outcomes, and separate
-visible and held-back case results. The default 20-preset staged batch costs up to
-60 requests. Use `--dry-run` to preview the request budget.
+```sh
+python -m scripts.check_authoring_staged --mode two-call \
+  --model qwen/qwen3-coder-next --task 02 --difficulty easy --examples 3 \
+  --report reports/yaml_two_call_smoke.json
 
-For a single preset and difficulty, `--interface FILE` supplies the JSON object
-of named input and output fields. Each field maps to a JSON type name, for
-example `{"inputs":{"labels":"array"},"outputs":{"result":"array"}}`.
-Without this option the input stage proposes the interface. Held-back
-expectations are model-generated, so mismatches still require review.
+python -m scripts.check_authoring_staged --mode one-shot-yaml \
+  --model qwen/qwen3-coder-next --task 02 --difficulty easy --examples 3 \
+  --report reports/yaml_one_shot_smoke.json
+```
+
+Append `--dry-run` to either command to preview the initial prompts and request
+budget without a key or model calls. After the smoke runs, repeat `--task` to
+choose more presets or omit it to run all 20. Use new report filenames for the
+larger runs. Two-call makes up to three requests per preset and One-shot up to
+two, including one possible YAML retry. The full 20-preset comparison therefore
+caps at 60 and 40 requests respectively.
+
+Exit code `0` means PASS, `1` means FAIL, `2` means BLOCKED, and `130` means
+interrupted. The legacy verdict measures model-expectation agreement. A fixed-case
+or reference failure appears separately in stdout and the report, and can coexist
+with exit 0. The summary lists unattempted tasks and each independent check.
+
+- Check `request_count` for logical model calls, including YAML repairs.
+  With either supported modelSpell build, HTTP retries are disabled and each logical call
+  allows at most one HTTP attempt. The exact number of sends is unavailable.
+- Check `valid_draft`, `executed`, `failed_stage` and `attempts` for stage evidence.
+  Reports omit raw provider error bodies and redact the API key. Generated data,
+  prompts and replies can still be sensitive.
+- Check `verified` for hand-written fixed cases and `reference` for independently
+  scored generated inputs. The latter scores model expectations and Python
+  outputs separately, with visible and held-back cases marked individually.
+
+An isolated shared-pool 429, network failure, timeout or server error allows one
+next independent task after a short pause. Two consecutive transient blockers
+stop the run. Account or key limits, exhausted credits and invalid configuration
+stop it immediately.
+
+Resume a partial run with its original benchmark flags and a fresh report path:
+
+```sh
+python -m scripts.check_authoring_staged --mode two-call \
+  --model qwen/qwen3-coder-next --task 02 --difficulty easy --examples 3 \
+  --resume reports/yaml_two_call_smoke.json --report reports/yaml_two_call_resumed.json
+```
+
+A matching run preserves earlier PASS and FAIL results and reuses accepted
+two-call examples when only Python is pending. Reports without a matching source,
+prompt, contract, settings and imported modelSpell source manifest remain readable. Use repeatable `--task`
+to rerun selected presets from those reports. Use `reports/` for checkpoints so
+they stay outside the implementation fingerprint.
+
+#### Check example structure before generating Python
+
+Both YAML benchmarks use fixed input and output names and types for each preset,
+with the same contract at all three difficulties. Edit
+`scriptspell/prompts/preset_contracts.json` to change a preset contract. Record
+rules describe nested fields where required. Free-form tasks can still infer
+their interface.
+
+```sh
+python -m scripts.check_authoring_staged --mode two-call --examples-only \
+  --model qwen/qwen3-coder-next --difficulty easy --examples 3 \
+  --report reports/yaml_examples_only.json
+```
+
+Use `--task 02 --dry-run` to inspect the exact initial prompt for one preset
+before running it. Omit `--task` to run all 20. This check makes at most two
+requests per preset (40 across all 20), including the single YAML retry. It
+does not generate or run Python.
+
+In `examples_validation`, each rate uses the number of replies evaluated at
+that point. A provider failure with no reply leaves that check unevaluated. If
+it happens during repair, the rejected first reply still counts. These rates
+measure structure, names and types. For independent correctness use the
+separate `reference` results when available.
+
+Use `--mode legacy-json` for the older three-call JSON benchmark. For a single
+preset and difficulty, `--interface FILE` supplies named input and output types
+as a JSON object. YAML modes use declarations such as `list[str]`, while the
+legacy benchmark uses JSON type names such as `array`. An explicit YAML
+interface replaces the preset contract, including its nested rules.
 
 ### Developer playground
 
@@ -77,11 +146,20 @@ python -m ui --no-browser          # prints the token-protected URL
 ```
 
 Run the playground from the checkout. Keep `ui/` out of the wheel and sdist.
-The browser uses the public `AuthoringSession` workflow. The adapter uses pinned
-modelSpell 0.3.0 for discovery, setting checks and dispatch. The library imports
-neither UI nor model transport. Blank generation settings use provider defaults.
-Model requests have a 120-second timeout. Generation retries a format error once. It does not
-execute code. Accepted corrections and proposed repairs run the suite in Monty.
+The browser uses the public `AuthoringSession`, `StagedAuthoring` and `YamlAuthoring`
+workflows with `settings={}` and a bound `make_dispatch`. An injected host can
+also pass `settings={}`; only the legacy four-field shape uses
+`validate_model_settings()`. Share `model_messages()` for preview and transport.
+Keep modelSpell lazy in the optional adapter. The published 0.3.0 pin checks
+generation settings and JSON encoding of provider options at binding. The SDK
+checks the model argument and timeout before sending. The modelSpell 0.4.0 candidate uses
+`check_completion()` for offline preflight. Keep native LM Studio's result
+transport field so `finish_reason=None` can be checked alongside truncation.
+
+Blank generation settings use provider defaults. The playground uses a 120-second
+timeout. Keep the playground and both paid CLIs on Managed routing with zero transport
+retries. Generation can request one format correction. Accepted corrections and
+proposed repairs run the suite in Monty.
 
 The server binds only to 127.0.0.1 and checks a per-launch token and local Host/Origin.
 Keep provider keys in process memory and out of browser storage, journals and exports.
@@ -101,21 +179,26 @@ guidance in the preset files and reusable instructions in the stage or shared
 templates. Template placeholders use `${name}`. The Monty profile is injected
 from the runtime. Package the catalog with the wheel.
 
-The playground offers One-shot and Staged authoring. Select a stage and preview
-its System and User messages before sending. Copy the full System message to
-include the response schema when one applies. Paste a model reply to validate it
-locally without making an API call. In Staged mode, replacing inputs discards
-the working expectations and Python. Replacing expectations discards the
-working Python. Completed drafts are journaled as revisions. In-progress stage
-data is held in the browser session on the local server.
+The playground defaults to Two-call YAML and also offers One-shot YAML and
+Compatibility JSON. Preserve the legacy JSON workflow for callers and the legacy
+benchmark. Both YAML modes share the same validator. Report all verifiable
+contract errors after a successful parse. When parsing fails, report the
+available syntax diagnostics. The model-only retry is capped at one and carries
+the exact rejected reply. Use the existing Monty source and execution paths
+after YAML acceptance. The example templates ask for working comments between
+inputs and outputs. YAML parsing discards those comments before the Python stage.
 
-The render-only CLI uses the same message formatting:
+Preview System and User messages before sending. Copy the full System message
+to include a response schema when one applies. The render-only CLI uses the
+same message formatting:
 
 ```sh
-python -m scripts.render_authoring_prompt --task 02 --stage inputs --examples 3 --role user
-python -m scripts.render_authoring_prompt --task 02 --stage expectations --inputs inputs.json --role system
-python -m scripts.render_authoring_prompt --task 02 --stage python --inputs inputs.json --expected-outputs expected.json
+python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage examples --examples 3
+python -m scripts.render_authoring_prompt --task 02 --mode two-call --stage python --examples 3 --examples-yaml examples.yaml
+python -m scripts.render_authoring_prompt --task 02 --mode one-shot-yaml --stage one-shot
 ```
+
+For live runs, follow [Local verification of YAML authoring](#local-verification-of-yaml-authoring).
 
 Match the preset, difficulty, example count, and optional interface across stages.
 Copy System and User messages separately when the target chat supports both roles.
@@ -181,7 +264,7 @@ these probes, including from-import aliases and the namespace isolation regressi
 `docs/language-profile.md` for vocabulary changes; authoring instructions must remain
 derived from `profile()`.
 
-Keep model transport outside the product library. Preserve the version 4 single-example
+Keep provider transport in modelSpell or in the caller. The optional adapter binds ordinary modelSpell completions. Preserve the version 4 single-example
 prompt and proposal shape for existing consumers. The revision workflow also supports
 count-specific multi-example generation, correction and repair. All prompt construction,
 validation, comparisons and revision semantics belong in the library. Update the public
@@ -235,6 +318,19 @@ Identity is confirmed by sampling argv for the exact script path and the per-lau
 until the child has exec'd, because a single sample can catch the still-forked parent's
 image and mislabel a live child as unobservable. Do not reduce that to one sample.
 
+### modelSpell adapter compatibility
+
+Run the offline suite in one environment with the published development pin and
+a separate environment with the exact committed modelSpell candidate wheel.
+Build the candidate from its own checkout with
+`python scripts/build_release.py --commit <full-sha> --smoke --output-dir <candidate-dir>`.
+Install scriptSpell's development extra in the candidate environment first, verify the
+wheel SHA-256, then install it with `python -m pip install --force-reinstall --no-deps <wheel>`.
+Check the imported modelSpell path, version and availability of `check_completion()`
+in both environments. Record the scriptSpell source state, candidate commit and wheel
+hash with the results. Smoke-test the installed scriptSpell wheel outside the checkout
+with and without modelSpell.
+
 ## Release gates
 
 Do not describe a version as release-certified without its observed gates. A gate is observed, not inferred, and BLOCKED is
@@ -277,10 +373,11 @@ builds, verifies and smoke-tests the installed wheel. `tests.yml` is also reusab
 the release workflow. Do not add live-model calls to either workflow.
 
 `python scripts/build_release.py --smoke` builds from **committed HEAD**, never the
-working tree. It checks exact package contents, version/license metadata and NEWS;
-installs the wheel and its dependencies in a fresh environment; and tests authoring,
-validation and real execution outside the checkout. Dependency installation may need
-index access. Use `python -m build --wheel` for an uncommitted development wheel.
+working tree. It checks exact package contents, version/license metadata and NEWS.
+The smoke test installs the wheel and its dependencies in a fresh environment and
+exercises legacy JSON authoring, Two-call YAML and real execution outside the checkout.
+Dependency installation may need index access. Use `python -m build --wheel` for an
+uncommitted development wheel.
 Only the package, license and distribution metadata ship in the release wheel.
 
 `release.yml` follows modelSpell: a main push (or manual dispatch on main) runs CI,

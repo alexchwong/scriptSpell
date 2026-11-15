@@ -7,7 +7,7 @@ from .authoring import SCHEMA, _check_example
 from .profile import profile
 from .prompt_files import render, task_text
 from .source import validate_source
-from .workflow import AuthoringError, parse_json
+from .workflow import AuthoringError, _dispatch_settings, _dispatch_text, parse_json
 
 _TYPES = {'array': list, 'boolean': bool, 'integer': int, 'null': type(None),
           'object': dict, 'string': str}
@@ -102,6 +102,13 @@ class StagedAuthoring:
                         user=task_text(self.instruction, interface=self.contract,
                                        example_input=self.inputs['1'], expected_output=self.outputs['1']))
         raise StageError('stage_not_ready')
+
+    def generate(self, stage, dispatch, settings):
+        """Dispatch and accept one legacy JSON authoring stage."""
+        materials = self.materials(stage)
+        settings = _dispatch_settings(settings)
+        text = _dispatch_text(dispatch, settings, materials, f'json_{stage}')
+        self.accept(stage, text)
 
     def accept(self, stage, text):
         if stage == 'inputs':

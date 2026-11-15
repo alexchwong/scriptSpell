@@ -49,6 +49,7 @@ class YamlAuthoring:
             example = {side: {name: f'<{kind} value>' for name, kind in fields.items()}
                        for side, fields in self.interface.items()}
             shape = dump_examples(dict(interface=self.interface, examples=[example])).rstrip()
+            shape = shape.replace('\n    outputs:', '\n    ' + render('stages/yaml-working-slot') + '\n    outputs:')
             user += '\n\n' + render('stages/yaml-fixed-interface', shape=shape, count=self.count)
         if self.records:
             user += '\n\n' + _record_guidance(self.records)

@@ -36,7 +36,8 @@
     "stages/yaml-retry": "stages/yaml-retry.md",
     "shared/yaml-contract": "shared/yaml-contract.md",
     "shared/yaml-example": "shared/yaml-example.md",
-    "stages/yaml-fixed-interface": "stages/yaml-fixed-interface.md"
+    "stages/yaml-fixed-interface": "stages/yaml-fixed-interface.md",
+    "stages/yaml-working-slot": "stages/yaml-working-slot.md"
   },
   "presets": [
     {
